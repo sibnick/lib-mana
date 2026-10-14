@@ -100,7 +100,8 @@ IRQ and unmap failures also retain resources until a successful retry.
 ## Focused host evidence
 
 `tests/test_bootstrap.c` uses the real production PCI and GDMA units.
-It uses the shared host allocator and a focused, synchronous HWC model.
+It uses the shared host allocator and the reusable synchronous model in `tests/host/bootstrap.{c,h}`.
+`docs/host-tests.md` defines the model and request-response hook contracts.
 It checks the SMC address packing and emitted RX/SQ WQE fields.
 Synthetic device addresses differ from CPU pointers.
 The test also uses nonzero high page-frame nibbles.
