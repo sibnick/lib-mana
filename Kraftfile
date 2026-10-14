@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-3-Clause
+spec: v0.6
+type: library
+name: lib-mana
+version: 0.1.0
+description: Azure MANA native driver scaffold for Unikraft
+license: BSD-3-Clause
+dependencies:
+  unikraft:
+    version: e31b2c44effe583eb8910e713fda814b6e049213

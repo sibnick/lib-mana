@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-3-Clause
+menuconfig LIBMANA
+	bool "mana: Azure MANA driver scaffold"
+	depends on ARCH_X86_64 && PLAT_KVM && !HAVE_SMP
+	select LIBUKALLOC
+	select LIBUKBUS_PCI
+	select LIBUKNETDEV
+	select LIBUKINTCTLR_APIC
+	default n
+	help
+	  Build the MANA library scaffold for a single-core x86_64 KVM guest.
+	  The pinned Unikraft base needs the local xPIC MSI-X patch.
+	  PCI probe, GDMA/HWC, TX/RX, and netdev registration are not yet
+	  implemented. This option does not provide a network interface.

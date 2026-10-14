@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-3-Clause
+$(eval $(call addlib,appmanascaffold))
+APPMANASCAFFOLD_SRCS-y += $(APPMANASCAFFOLD_BASE)/main.c
