@@ -1,0 +1,127 @@
+diff --git a/drivers/ukintctlr/xpic/Makefile.uk b/drivers/ukintctlr/xpic/Makefile.uk
+index 7329d2a..495636a 100644
+--- a/drivers/ukintctlr/xpic/Makefile.uk
++++ b/drivers/ukintctlr/xpic/Makefile.uk
+@@ -8,3 +8,4 @@ LIBUKINTCTLR_XPIC_CINCLUDES-y += -I$(CONFIG_UK_BASE)/plat/common/include
+ 
+ LIBUKINTCTLR_XPIC_SRCS-y += $(LIBUKINTCTLR_XPIC_BASE)/pic.c
+ LIBUKINTCTLR_XPIC_SRCS-y += $(LIBUKINTCTLR_XPIC_BASE)/ukintctlr.c
++LIBUKINTCTLR_XPIC_SRCS-$(CONFIG_LIBUKINTCTLR_APIC) += $(LIBUKINTCTLR_XPIC_BASE)/msix.c
+diff --git a/drivers/ukintctlr/xpic/exportsyms.uk b/drivers/ukintctlr/xpic/exportsyms.uk
+index 9ce531b..2673c44 100644
+--- a/drivers/ukintctlr/xpic/exportsyms.uk
++++ b/drivers/ukintctlr/xpic/exportsyms.uk
+@@ -1,2 +1,4 @@
+ uk_intctlr_probe
+ uk_intctlr_xpic_handle_irq
++uk_intctlr_msix_alloc
++uk_intctlr_msix_free
+diff --git a/drivers/ukintctlr/xpic/include/uk/intctlr/limits.h b/drivers/ukintctlr/xpic/include/uk/intctlr/limits.h
+index 6e748f0..0e2d86d 100644
+--- a/drivers/ukintctlr/xpic/include/uk/intctlr/limits.h
++++ b/drivers/ukintctlr/xpic/include/uk/intctlr/limits.h
+@@ -6,11 +6,12 @@
+ #ifndef __UK_INTCTLR_XPIC_LIMITS_H__
+ #define __UK_INTCTLR_XPIC_LIMITS_H__
+ 
+-#define UK_INTCTLR_FIRST_ALLOCABLE_IRQ			16
+-#define UK_INTCTLR_LAST_ALLOCABLE_IRQ			224
++/* Keep the timer, IPI bands, and spurious vector outside the pool. */
++#define UK_INTCTLR_FIRST_ALLOCABLE_IRQ			20
++#define UK_INTCTLR_LAST_ALLOCABLE_IRQ			207
+ #define UK_INTCTLR_MAX_IRQ				(256 - 32)
+ 
+ #define UK_INTCTLR_ALLOCABLE_IRQ_COUNT			\
+-	(UK_INTCTLR_LAST_ALLOCABLE_IRQ - UK_INTCTLR_FIRST_ALLOCABLE_IRQ)
++	(UK_INTCTLR_LAST_ALLOCABLE_IRQ - UK_INTCTLR_FIRST_ALLOCABLE_IRQ + 1)
+ 
+ #endif /* __UK_INTCTLR_XPIC_LIMITS_H__ */
+diff --git a/drivers/ukintctlr/xpic/include/uk/intctlr/msix.h b/drivers/ukintctlr/xpic/include/uk/intctlr/msix.h
+new file mode 100644
+index 0000000..7fff26e
+--- /dev/null
++++ b/drivers/ukintctlr/xpic/include/uk/intctlr/msix.h
+@@ -0,0 +1,27 @@
++/* SPDX-License-Identifier: BSD-3-Clause */
++/*
++ * Copyright (c) 2026, Unikraft GmbH and The Unikraft Authors.
++ * Licensed under the BSD-3-Clause License.
++ */
++#ifndef UK_INTCTLR_MSIX_H
++#define UK_INTCTLR_MSIX_H
++
++#include <uk/essentials.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* Single-core BSP only. Allocate an IRQ and construct its MSI-X message.
++ * Register the handler and program the device table separately.
++ * Return zero or a negative errno. Outputs are unchanged on failure.
++ */
++int uk_intctlr_msix_alloc(unsigned int lcpu, unsigned int *irq,
++			 __u64 *addr, __u32 *data);
++int uk_intctlr_msix_free(unsigned int irq);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
+diff --git a/drivers/ukintctlr/xpic/msix.c b/drivers/ukintctlr/xpic/msix.c
+new file mode 100644
+index 0000000..ae74387
+--- /dev/null
++++ b/drivers/ukintctlr/xpic/msix.c
+@@ -0,0 +1,50 @@
++/* SPDX-License-Identifier: BSD-3-Clause */
++/*
++ * Copyright (c) 2026, Unikraft GmbH and The Unikraft Authors.
++ * Licensed under the BSD-3-Clause License.
++ *
++ * Based on the lib-ena e31b2c44 xPIC MSI-X patch.
++ * Limit allocation to the BSP and read its APIC ID directly.
++ */
++#include <errno.h>
++#include <uk/arch/x86_64.h>
++#include <uk/config.h>
++#include <uk/intctlr.h>
++#include <uk/intctlr/limits.h>
++#include <uk/intctlr/msix.h>
++
++#if CONFIG_HAVE_SMP
++#error "This MSI-X patch supports single-core guests only"
++#endif
++
++int uk_intctlr_msix_alloc(unsigned int lcpu, unsigned int *irq,
++			 __u64 *addr, __u32 *data)
++{
++	__u32 a, b, c, d;
++	unsigned int allocated;
++	int rc;
++
++	if (!irq || !addr || !data)
++		return -EINVAL;
++	if (lcpu != 0)
++		return -ENOTSUP;
++
++	rc = uk_intctlr_irq_alloc(&allocated, 1);
++	if (rc)
++		return rc;
++
++	uk_arch_x86_64_cpuid(1, 0, &a, &b, &c, &d);
++	*irq = allocated;
++	/* xAPIC physical destination uses bits 19:12, not bits 31:24. */
++	*addr = 0xfee00000ULL | ((__u64)((b >> 24) & 0xff) << 12);
++	*data = 32 + allocated;
++	return 0;
++}
++
++int uk_intctlr_msix_free(unsigned int irq)
++{
++	if (irq < UK_INTCTLR_FIRST_ALLOCABLE_IRQ ||
++	    irq > UK_INTCTLR_LAST_ALLOCABLE_IRQ)
++		return -EINVAL;
++	return uk_intctlr_irq_free(&irq, 1);
++}

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-3-Clause
+$(eval $(call addlib_s,libmana,$(CONFIG_LIBMANA)))
+
+CINCLUDES-$(CONFIG_LIBMANA) += -I$(LIBMANA_BASE)/include
+CXXINCLUDES-$(CONFIG_LIBMANA) += -I$(LIBMANA_BASE)/include
+
+LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/mana.c
