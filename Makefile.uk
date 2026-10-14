@@ -9,4 +9,5 @@ LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/pci.c
 LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/gdma.c
 LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/control.c
 LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/data_queue.c
+LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/tx.c
 LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/platform_unikraft.c
