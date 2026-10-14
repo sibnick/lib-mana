@@ -1,8 +1,8 @@
 # Unikraft MANA driver
 
 This project targets the Azure MANA VF (`1414:00ba`) on x86_64 KVM.
-The code implements PCI probe, GDMA/HWC bootstrap, MANA control, and shared data queue infrastructure.
-It **does not provide a network interface**.
+The code implements PCI probe, GDMA/HWC bootstrap, MANA control, shared data queues, and basic TX/RX.
+It registers one `uknetdev` after bootstrap and control succeed.
 Production bootstrap rejects DMA unless `LIBMANA_DIRECT_DMA` enables an explicit deployment contract.
 This option is disabled by default.
 No Azure device has validated the contract or HWC startup.
@@ -25,6 +25,9 @@ The MVP does not promise network continuity during VF removal.
 | `src/pci.c`, `src/gdma.c` | PCI resources, MSI-X, SMC, HWC rings, and GDMA discovery |
 | `include/uk/mana/control.h`, `src/control.c` | Device discovery, port setup, link events, and queue object control |
 | `include/uk/mana/data_queue.h`, `src/data_queue.c` | Registered data rings, data EQ/CQ polling, and generic GDMA WQE submission |
+| `include/uk/mana/tx.h`, `src/tx.c` | Copied TX frames and explicit completion ownership |
+| `include/uk/mana/rx.h`, `src/rx.c` | RX buffer ownership, refill, and fenced shutdown |
+| `include/uk/mana/netdev.h`, `src/netdev.c` | Real uknetdev operations, packet ownership, and driver stop API |
 | `src/platform_unikraft.c` | Pinned x86_64 KVM platform and PCI driver registration |
 | `tests/test_scaffold.c` | Host header and library smoke test |
 | `tests/host/`, `tests/test_host.c` | Test runner, fault points, MMIO, allocation, and clock foundation |
@@ -36,6 +39,7 @@ The MVP does not promise network continuity during VF removal.
 | `docs/bootstrap.md`, `tests/test_bootstrap.c` | Bootstrap contract, source pin, and focused protocol tests |
 | `docs/control.md`, `tests/test_control.c` | Control contract, source pin, ownership, and focused tests |
 | `docs/data-queues.md`, `tests/test_data_queue.c` | Shared queue ownership, packet worker boundary, and focused tests |
+| `docs/netdev.md`, `tests/test_netdev.c` | Netdev lifecycle and real pinned uknetdev/netbuf host tests |
 
 ## Host checks
 
@@ -47,8 +51,12 @@ make test-sanitize
 make license-check
 ```
 
-The tests do not need Azure credentials or a network connection.
+The tests do not need Azure credentials.
+The netdev suite needs the prepared pinned Unikraft source.
+The first run downloads that public source if the default cache does not exist.
+Set `UK_SOURCE` to use an existing prepared source tree without changing it.
 Both host targets run the foundation self-tests.
+Both targets also compile the real integration, pinned `netdev.c`, and pinned `netbuf.c`.
 See [Host test foundation](docs/host-tests.md) for fault schedules and mock limits.
 The reusable bootstrap model covers GDMA/HWC transport.
 Host tests do not prove DMA coherency or actual packet traffic.
@@ -77,6 +85,7 @@ Install GCC, binutils, flex, bison, m4, and Python 3 before this check.
 The build selects GNU C11 because this core predates GCC's default C23 mode.
 The test references the PCI registration and MSI-X symbols to check their ABI.
 The smoke application does not emulate or attach a MANA device.
+It links the real netdev integration without the host support headers.
 The linked PCI driver rejects device DMA unless the deployment option is enabled.
 The local patch and configuration support single-core guests only.
 
@@ -94,4 +103,5 @@ See [Bootstrap](docs/bootstrap.md) for source evidence, tests, and remaining har
 Control ticket `6684b33f38` adds source-defined device and port operations.
 See [Control](docs/control.md) for queue ownership and the TX/RX worker boundary.
 See [Shared data queues](docs/data-queues.md) for the TX/RX prerequisite API and DMA release rules.
-TX/RX, `uknetdev`, full device mocks, and Azure validation remain separate tickets.
+See [TX](docs/tx.md), [RX](docs/rx.md), and [Netdev](docs/netdev.md) for packet ownership and lifecycle rules.
+Full device mocks, CI, and Azure validation remain separate tickets.

@@ -3,7 +3,7 @@ spec: v0.6
 type: library
 name: lib-mana
 version: 0.1.0
-description: Azure MANA native driver scaffold for Unikraft
+description: Azure MANA native network driver for Unikraft
 license: BSD-3-Clause
 dependencies:
   unikraft:

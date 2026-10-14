@@ -11,6 +11,7 @@
 #include <uk/mana/data_queue.h>
 #include <uk/mana/tx.h>
 #include <uk/mana/rx.h>
+#include <uk/mana/netdev.h>
 #include <uk/netdev_driver.h>
 
 /* Keep references so the link checks the platform ABI without running it. */
@@ -35,16 +36,19 @@ static int (*volatile tx_api)(struct mana_tx *, const void *, uint32_t, void *) 
 	mana_tx_submit;
 static int (*volatile rx_api)(struct mana_rx *, struct mana_rx_packet *) =
 	mana_rx_poll;
+static int (*volatile netdev_api)(struct mana_netdev *, struct mana_bootstrap *,
+				 struct uk_alloc *) = mana_netdev_register;
+static int (*volatile netdev_stop_api)(struct mana_netdev *) = mana_netdev_stop;
 
 int main(int argc __unused, char *argv[] __unused)
 {
 	if (!msix_alloc_api || !msix_free_api || !pci_register_api ||
 	    !bootstrap_api || !stop_api || !control_api || !queue_api || !data_api ||
-	    !tx_api || !rx_api)
+	    !tx_api || !rx_api || !netdev_api || !netdev_stop_api)
 		return 1;
 	printf("MANA bootstrap %04x:%04x, GDMA page %u, Unikraft %s\n",
 	       mana_build_info.pci_vendor_id, mana_build_info.pci_device_id,
 	       MANA_GDMA_PAGE_SIZE, mana_build_info.unikraft_revision);
-	printf("No network interface. Direct DMA needs a checked deployment contract.\n");
+	printf("MANA uknetdev needs a checked direct DMA deployment contract.\n");
 	return 0;
 }

@@ -34,3 +34,7 @@ mana_rx_poll
 mana_rx_refill
 mana_rx_packet_release
 mana_rx_stop
+mana_netdev_register
+mana_netdev_stop
+mana_netdev_shutdown
+mana_netdev_poll
