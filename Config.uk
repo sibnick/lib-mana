@@ -1,14 +1,32 @@
 # SPDX-License-Identifier: BSD-3-Clause
 menuconfig LIBMANA
-	bool "mana: Azure MANA driver scaffold"
+	bool "mana: Azure MANA VF bootstrap"
 	depends on ARCH_X86_64 && PLAT_KVM && !HAVE_SMP
 	select LIBUKALLOC
 	select LIBUKBUS_PCI
 	select LIBUKNETDEV
 	select LIBUKINTCTLR_APIC
+	select LIBUKVMEM
 	default n
 	help
-	  Build the MANA library scaffold for a single-core x86_64 KVM guest.
+	  Build MANA PCI and HWC bootstrap for a single-core x86_64 KVM guest.
 	  The pinned Unikraft base needs the local xPIC MSI-X patch.
-	  PCI probe, GDMA/HWC, TX/RX, and netdev registration are not yet
-	  implemented. This option does not provide a network interface.
+	  Direct DMA needs a separate deployment contract below.
+	  TX/RX and netdev registration are not implemented.
+	  This option does not provide a network interface.
+
+if LIBMANA
+
+config LIBMANA_DIRECT_DMA
+	bool "Assert coherent, unencrypted, identity device DMA"
+	default n
+	help
+	  Enable only after checking the hypervisor and assigned VF setup.
+	  Guest physical addresses must equal device DMA addresses.
+	  No translating IOMMU or encrypted/private guest RAM is supported.
+	  DMA RAM must use write-back caching and coherent PCI DMA.
+	  The driver checks physical translation and uncached MMIO mappings.
+	  These checks do not prove the hypervisor's DMA contract.
+	  Leave disabled if these deployment facts are unknown.
+
+endif

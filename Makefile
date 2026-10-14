@@ -4,11 +4,11 @@ PYTHON ?= python3
 CPPFLAGS += -Iinclude
 CFLAGS ?= -O2 -g
 WARNINGS = -std=c11 -Wall -Wextra -Werror -pedantic
-SOURCES = src/mana.c
-HEADERS = $(wildcard include/uk/*.h include/uk/mana/*.h)
+SOURCES = src/mana.c src/pci.c src/gdma.c
+HEADERS = $(wildcard include/uk/*.h include/uk/mana/*.h src/*.h)
 HOST_SUPPORT = tests/host/mock.c
 HOST_HEADERS = $(wildcard tests/host/*.h)
-HOST_TESTS = scaffold host
+HOST_TESTS = scaffold host bootstrap
 HOST_BINARIES = $(addprefix build/test_,$(HOST_TESTS))
 HOST_SANITIZERS = $(addsuffix _sanitize,$(HOST_BINARIES))
 ROOT := $(CURDIR)
@@ -49,6 +49,13 @@ test-msix: prepare-unikraft license-check
 		tests/test_msix.c build/unikraft/drivers/ukintctlr/xpic/msix.c \
 		$(LDFLAGS) $(LDLIBS) -o build/test_msix
 	./build/test_msix
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -fsanitize=undefined \
+		-fno-sanitize-recover=undefined -Itests/msix/include \
+		-Ibuild/unikraft/arch/x86/x86_64/include \
+		-Ibuild/unikraft/drivers/ukintctlr/xpic \
+		tests/test_pic.c build/unikraft/drivers/ukintctlr/xpic/pic.c \
+		$(LDFLAGS) $(LDLIBS) -o build/test_pic
+	./build/test_pic
 
 unikraft-test: test-msix
 	$(UK_MAKE) UK_DEFCONFIG=$(ROOT)/tests/unikraft/defconfig defconfig
@@ -57,4 +64,4 @@ unikraft-test: test-msix
 	$(UK_MAKE) -j2
 
 clean:
-	$(RM) $(HOST_BINARIES) $(HOST_SANITIZERS) build/test_msix
+	$(RM) $(HOST_BINARIES) $(HOST_SANITIZERS) build/test_msix build/test_pic
