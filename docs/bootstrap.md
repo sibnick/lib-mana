@@ -20,7 +20,7 @@ No GDMA or MANA success is fabricated when a platform or protocol step fails.
 
 The VF destination queue IDs remain zero, as in the Linux VF path.
 The driver reports OS type `Other` and advertises no unsupported driver capabilities.
-Data-queue memory-region registration belongs to later tickets.
+The [shared data queue layer](data-queues.md) registers separate data-queue memory regions after device control starts.
 HWC uses the bootstrap pages and the GPA memory key from its init events.
 
 ## Platform contract

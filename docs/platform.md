@@ -72,8 +72,9 @@ Do not enable it under a translating guest IOMMU or a confidential VM.
 The hypervisor must map device addresses to the corresponding guest physical RAM.
 
 The adapter allocates one raw page per HWC ring or message buffer.
-It populates the page before it translates its address.
-It checks the page alignment, physical translation, and write-back PAT selection.
+It also allocates contiguous multi-page memory for the shared data queue layer.
+It populates every page before it checks its address.
+It checks each page's alignment, contiguous physical translation, and write-back PAT selection.
 It never casts a virtual pointer to a device address.
 The address translation does not prove the hypervisor's device mapping.
 See [Bootstrap](bootstrap.md) for the operator checks and missing Azure evidence.
@@ -86,6 +87,7 @@ The adapter checks the live PAT before it creates each mapping.
 It uses aligned volatile accesses and 64-bit doorbell writes.
 DMA read and write barriers use LFENCE and SFENCE with compiler memory barriers.
 GDMA memory-region registration remains a separate protocol operation.
+The [shared data queue layer](data-queues.md) implements this operation after control registers the MANA device.
 HWC uses its SMC bootstrap page addresses and firmware-supplied GPA memory key.
 It does not need the later GDMA data-queue memory-region registration.
 
