@@ -1,7 +1,8 @@
 # Host test foundation
 
 This slice supports ticket `4c2b1925b2`.
-It supplies test-only primitives, not a complete MANA device model.
+It supplies test-only primitives and a reusable PCI, SMC, and HWC bootstrap model.
+It does not supply complete MANA control, TX, or RX responses.
 It does not change the production platform API.
 
 ## Run the tests
@@ -11,7 +12,7 @@ make test
 make test-sanitize
 ```
 
-Both targets run the scaffold checks and foundation self-tests.
+Both targets run the scaffold checks, foundation self-tests, and bootstrap regression cases.
 The sanitizer target uses AddressSanitizer and UndefinedBehaviorSanitizer.
 Add host suites to `HOST_TESTS` in the root Makefile.
 Name each suite `tests/test_<name>.c`.
@@ -69,22 +70,63 @@ The mock has no threads, wall-clock waits, or random input.
 ## Protocol boundary and limits
 
 The mock region size and allocation capacity are test limits, not MANA device limits.
-The mock does not encode BAR registers, doorbells, GDMA requests, or HWC events.
+The primitives do not encode BAR registers, doorbells, GDMA requests, or HWC events.
 It does not emulate DMA coherency, interrupt delivery, or hardware memory ordering.
 It supplies no guessed command formats.
 
-The bootstrap worker owns `include/uk/mana/platform.h`.
-An adapter must connect these primitives to that checked production interface.
-PCI configuration, MSI-X, barriers, and scheduled device events still need that adapter.
-Bootstrap tests must then check valid startup, malformed resources, timeouts, and partial cleanup.
-Control, TX, and RX device responses belong to later slices.
+## Reusable bootstrap model
+
+`tests/host/bootstrap.h` exposes caller-owned `struct host_bootstrap`.
+`tests/host/bootstrap.c` supplies the production `mana_platform` adapter and synchronous device transport.
+The root Makefile links both host support files into each host suite.
+Initialize fresh storage with `host_bootstrap_init(model, HOST_BOOTSTRAP_NORMAL)`.
+Use `model.b` and `model.platform` with the real bootstrap and HWC functions.
+Keep the model at the same address while its platform callbacks remain active.
+Do not initialize a model with live resources.
+Stop the bootstrap before calling `host_mock_cleanup(&model.host)`.
+Require zero from cleanup after successful driver teardown.
+
+The model preserves synthetic DMA addresses and checks SMC address packing, WQEs, and SQ doorbells.
+It supplies the four source-grounded bootstrap GDMA responses.
+It records resource counts, protocol mismatches, and platform error reports.
+The public fault controls match the bootstrap regression cases.
+`host_bootstrap_config` reads the byte-backed PCI configuration without consuming adapter fault counters.
+Use byte offsets and widths of 1, 2, or 4 within its 256-byte region.
+MMIO and DMA-free errors abort with no success fallback.
+Recoverable platform callbacks return negative errno values.
+
+Set `model.respond` and `model.respond_ctx` to extend request-response behavior.
+The hook runs after transport checks and before response completions and interrupts.
+It receives the request bytes and their header length.
+The response buffer has 4096 bytes and a zeroed body.
+The model prefills the requested response header, device ID, and activity ID.
+It preserves the requested response version, not the request version.
+The hook can change header fields to test malformed responses.
+The initial response length equals the requested response size.
+Return zero after writing a response body, status, and actual response length.
+The model writes that length into the header and RX completion.
+The hook must keep the length between 32 and 4096 bytes.
+Transport fault injection still applies after the hook.
+The hook must not retain either buffer or issue a nested HWC request.
+
+Return `-ENOTSUP` without changing the buffer or length to select a built-in response.
+Built-in responses require their original command and device IDs.
+An unsupported request without a handler aborts with a diagnostic.
+Any other hook error or invalid response length also aborts with a diagnostic.
+These failures cannot return through the platform's void doorbell callback.
+They must not create a successful firmware response.
+Tests can write a source-defined firmware status to test driver error handling.
+The hook does not supply MANA command definitions or asynchronous event scheduling.
+Add only responses that follow the pinned protocol source.
+Control, TX, and RX coverage belongs to later slices.
 The full ticket remains open.
 
-Use the authoritative Linux definitions for each added protocol behavior:
+Use the authoritative Linux definitions for each added protocol behavior.
+`docs/bootstrap.md` records the source pin.
 
-- [GDMA definitions](https://github.com/torvalds/linux/blob/master/include/net/mana/gdma.h)
-- [GDMA implementation](https://github.com/torvalds/linux/blob/master/drivers/net/ethernet/microsoft/mana/gdma_main.c)
-- [HWC implementation](https://github.com/torvalds/linux/blob/master/drivers/net/ethernet/microsoft/mana/hw_channel.c)
+- [GDMA definitions](https://github.com/torvalds/linux/blob/0fcb05b72344f40806cbe810de8872f1698bf053/include/net/mana/gdma.h)
+- [GDMA implementation](https://github.com/torvalds/linux/blob/0fcb05b72344f40806cbe810de8872f1698bf053/drivers/net/ethernet/microsoft/mana/gdma_main.c)
+- [HWC implementation](https://github.com/torvalds/linux/blob/0fcb05b72344f40806cbe810de8872f1698bf053/drivers/net/ethernet/microsoft/mana/hw_channel.c)
 
 The Fossil wiki page **MANA and GDMA Protocol Research** records the checked protocol facts.
 Do not treat foundation self-tests as proof of HWC startup or Azure network operation.

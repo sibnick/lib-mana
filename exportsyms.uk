@@ -5,3 +5,14 @@ mana_bootstrap_poll
 mana_hwc_request
 mana_unikraft_bootstrap
 mana_unikraft_stop
+mana_control_start
+mana_control_stop
+mana_control_poll
+mana_control_query_link
+mana_control_set_mtu
+mana_control_create_queue
+mana_control_destroy_queue
+mana_control_set_rx
+mana_control_fence_rx
+mana_control_fence_complete
+mana_control_wait_fence

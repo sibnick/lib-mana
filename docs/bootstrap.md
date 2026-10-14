@@ -67,7 +67,7 @@ The caller supplies fresh, zeroed `struct mana_bootstrap` storage.
 `mana_bootstrap_start()` owns successful mappings, IRQ allocation, and DMA pages.
 The caller must retain that storage until `mana_bootstrap_stop()` succeeds.
 The caller must also retain the platform callbacks and their context.
-`mana_hwc_request()` accepts a version-1 request with a 40-byte header.
+`mana_hwc_request()` accepts a 40-byte header with request versions 1 through 5 and response versions 1 through 3.
 It validates the response header, command, device, activity ID, length, and completion queue.
 It returns the actual response length separately.
 Calls are serialized.
@@ -75,6 +75,9 @@ They are not safe from interrupt context.
 The IRQ handler only records interrupt delivery.
 `mana_bootstrap_poll()` processes EQ and CQ data outside interrupt context.
 Later runtime users must call it to process asynchronous events.
+The control API records source-defined link events through this poll.
+See [Device and port control](control.md) for version handling and ownership rules.
+Bootstrap stop returns `-EBUSY` until control releases device ownership.
 
 `mana_unikraft_bootstrap()` returns driver-owned state, including quarantined state.
 It returns NULL when no device remains claimed.
@@ -100,7 +103,8 @@ IRQ and unmap failures also retain resources until a successful retry.
 ## Focused host evidence
 
 `tests/test_bootstrap.c` uses the real production PCI and GDMA units.
-It uses the shared host allocator and a focused, synchronous HWC model.
+It uses the shared host allocator and the reusable synchronous model in `tests/host/bootstrap.{c,h}`.
+`docs/host-tests.md` defines the model and request-response hook contracts.
 It checks the SMC address packing and emitted RX/SQ WQE fields.
 Synthetic device addresses differ from CPU pointers.
 The test also uses nonzero high page-frame nibbles.

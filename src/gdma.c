@@ -147,7 +147,9 @@ static int complete_rx(struct mana_bootstrap *b, const unsigned char *data)
 	memcpy(b->response, rx, length);
 	header = b->response;
 	if (mana_get32(header) != 0 || mana_get32(header + 4) != b->pending_type ||
-	    header[8] != 1 || header[9] != 0 || header[10] || header[11] ||
+	    !mana_get16(header + 8) ||
+	    mana_get16(header + 8) > b->pending_response_version ||
+	    header[10] || header[11] ||
 	    mana_get32(header + 12) != length ||
 	    mana_get32(header + 16) != b->pending_device ||
 	    mana_get32(header + 20) != b->pending_activity ||
@@ -213,6 +215,7 @@ int mana_bootstrap_poll(struct mana_bootstrap *b)
 		if (err <= 0)
 			break;
 		data = mana_get32(entry);
+		err = 0;
 		switch (info & 0xff) {
 		case 129:
 		case 130:
@@ -230,7 +233,25 @@ int mana_bootstrap_poll(struct mana_bootstrap *b)
 			break;
 		case 133:
 			/* A timeout update does not change this driver's bound. */
-			err = (data >> 24) == 1 ? 0 : -ENOTSUP;
+			switch (data >> 24) {
+			case 1:
+				break;
+			case 2:
+			case 3:
+				b->link_known = 1;
+				b->link_up = (data >> 24) == 2;
+				b->link_generation++;
+				break;
+			default:
+				err = -ENOTSUP;
+				break;
+			}
+			break;
+		case 132:
+		case 134:
+		case 135:
+			/* No safe VF reset or service recovery exists on this platform. */
+			err = -ENOTSUP;
 			break;
 		default:
 			err = -EPROTO;
@@ -269,9 +290,10 @@ int mana_hwc_request(struct mana_bootstrap *b, const void *request,
 	if (!req || !response || !response_length || request_size < 40 ||
 	    request_size > b->max_req || response_size < 32 ||
 	    response_size > b->max_resp || mana_get32(req) ||
-	    mana_get32(req + 12) != request_size || req[8] != 1 || req[9] ||
+	    mana_get32(req + 12) != request_size ||
+	    !mana_get16(req + 8) || mana_get16(req + 8) > 5 ||
 	    mana_get32(req + 16) || mana_get32(req + 20) != mana_get32(req + 4) ||
-	    req[24] != 1 || req[25] ||
+	    !mana_get16(req + 24) || mana_get16(req + 24) > 3 ||
 	    mana_get32(req + 28) != response_size) {
 		b->p->error(b->p->ctx, "HWC request size or header", -EINVAL);
 		return -EINVAL;
@@ -283,6 +305,7 @@ int mana_hwc_request(struct mana_bootstrap *b, const void *request,
 	b->pending_type = mana_get32(req + 4);
 	b->pending_activity = mana_get32(req + 36);
 	b->pending_device = mana_get32(req + 32);
+	b->pending_response_version = mana_get16(req + 24);
 	b->response = response;
 	b->response_size = response_size;
 	b->response_length = 0;
@@ -320,8 +343,10 @@ int mana_hwc_request(struct mana_bootstrap *b, const void *request,
 	b->response = NULL;
 	post_rx(b);
 	if (mana_get32((unsigned char *)response + 24)) {
-		b->p->error(b->p->ctx, "GDMA response status", -EPROTO);
-		return -EPROTO;
+		err = mana_get32((unsigned char *)response + 24) == UINT32_MAX ?
+			-EOPNOTSUPP : -EPROTO;
+		b->p->error(b->p->ctx, "GDMA response status", err);
+		return err;
 	}
 	return 0;
 }
@@ -508,6 +533,10 @@ int mana_bootstrap_stop(struct mana_bootstrap *b)
 	int err;
 	if (!b || !b->p)
 		return -EINVAL;
+	if (b->control_owned) {
+		b->p->error(b->p->ctx, "bootstrap stop: control still owned", -EBUSY);
+		return -EBUSY;
+	}
 	b->ready = 0;
 	err = mana_gdma_destroy(b);
 	if (!err)

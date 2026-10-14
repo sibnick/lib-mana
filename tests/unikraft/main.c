@@ -7,6 +7,7 @@
 #include <uk/mana.h>
 #include <uk/mana/gdma.h>
 #include <uk/mana/bootstrap.h>
+#include <uk/mana/control.h>
 #include <uk/netdev_driver.h>
 
 /* Keep references so the link checks the platform ABI without running it. */
@@ -18,11 +19,18 @@ static void (*volatile pci_register_api)(struct pci_driver *) =
 static struct mana_bootstrap *(*volatile bootstrap_api)(void) =
 	mana_unikraft_bootstrap;
 static int (*volatile stop_api)(void) = mana_unikraft_stop;
+static int (*volatile control_api)(struct mana_control *, struct mana_bootstrap *,
+				  uint32_t) = mana_control_start;
+static int (*volatile queue_api)(struct mana_control *,
+				struct mana_control_queue *,
+				enum mana_control_queue_type,
+				const struct mana_control_queue_spec *) =
+	mana_control_create_queue;
 
 int main(int argc __unused, char *argv[] __unused)
 {
 	if (!msix_alloc_api || !msix_free_api || !pci_register_api ||
-	    !bootstrap_api || !stop_api)
+	    !bootstrap_api || !stop_api || !control_api || !queue_api)
 		return 1;
 	printf("MANA bootstrap %04x:%04x, GDMA page %u, Unikraft %s\n",
 	       mana_build_info.pci_vendor_id, mana_build_info.pci_device_id,
