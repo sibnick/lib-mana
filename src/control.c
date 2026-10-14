@@ -430,7 +430,7 @@ int mana_control_stop(struct mana_control *c)
 	int err = usable(c);
 	if (err)
 		return err;
-	if (c->tx || c->rx)
+	if (c->tx || c->rx || c->data_owned)
 		return report(c, "control queues still owned", -EBUSY);
 	if (c->configured) {
 		err = mana_control_set_rx(c, 0);

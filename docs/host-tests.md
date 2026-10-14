@@ -3,6 +3,7 @@
 This slice supports ticket `4c2b1925b2`.
 It supplies test-only primitives and a reusable PCI, SMC, and HWC bootstrap model.
 It does not supply complete MANA control, TX, or RX responses.
+Separate control and data queue suites extend its response hook with source-defined responses.
 It does not change the production platform API.
 
 ## Run the tests
@@ -119,6 +120,8 @@ Tests can write a source-defined firmware status to test driver error handling.
 The hook does not supply MANA command definitions or asynchronous event scheduling.
 Add only responses that follow the pinned protocol source.
 Control, TX, and RX coverage belongs to later slices.
+`tests/test_data_queue.c` adds shared ring ownership, GDMA registration, data doorbell, and fence checks.
+It does not emulate packet traffic.
 The full ticket remains open.
 
 Use the authoritative Linux definitions for each added protocol behavior.

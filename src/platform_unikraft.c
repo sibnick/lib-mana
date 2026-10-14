@@ -144,31 +144,46 @@ static int dma_alloc(void *ctx, size_t size, struct mana_dma *dma)
 	struct mana_uk_context *c = ctx;
 	void *va;
 	__paddr_t pa;
-	__pte_t pte;
-	unsigned int level = UK_PAGING_PAGE_LEVEL;
+	size_t off;
+	unsigned long pages;
 	int err;
-	if (size != 4096)
+	if (!size || (size & 4095))
 		return -EINVAL;
-	va = uk_palloc(c->alloc, 1);
+	pages = size / 4096;
+	va = uk_palloc(c->alloc, pages);
 	if (!va)
 		return -ENOMEM;
-	memset(va, 0, size);
-	err = uk_paging_pt_walk(uk_paging_pt_get_active(), (__vaddr_t)va,
-				&level, NULL, &pte);
-	if (err || !UK_PAGING_PT_Lx_PTE_PRESENT(pte, level) ||
-	    !UK_PAGING_PAGE_Lx_IS(pte, level) ||
-	    (pte & (UK_ARCH_X86_64_PTE_PCD | UK_ARCH_X86_64_PTE_PWT)) ||
-	    (pte & (level == UK_PAGING_PAGE_LEVEL ? 0x80UL : 0x1000UL)) ||
-	    (uk_arch_x86_64_rdmsrl(UK_ARCH_X86_64_MSR_PAT) & 0xff) !=
-	    UK_ARCH_X86_64_PAT_WB) {
-		uk_pfree(c->alloc, va, 1);
-		return err ? err : -ENOTSUP;
+	if (((uintptr_t)va & 4095) || (uintptr_t)va > UINT64_MAX - (size - 1)) {
+		uk_pfree(c->alloc, va, pages);
+		return -EFAULT;
 	}
+	memset(va, 0, size);
 	pa = uk_paging_virt_to_phys((__vaddr_t)va);
 	if (pa == UK_PAGING_PADDR_INV || (pa & 4095) ||
-	    uk_paging_virt_to_phys((__vaddr_t)va + 4095) != pa + 4095) {
-		uk_pfree(c->alloc, va, 1);
+	    pa > UINT64_MAX - (size - 1)) {
+		uk_pfree(c->alloc, va, pages);
 		return -EFAULT;
+	}
+	for (off = 0; off < size; off += 4096) {
+		__pte_t pte;
+		unsigned int level = UK_PAGING_PAGE_LEVEL;
+		__vaddr_t page = (__vaddr_t)va + off;
+		err = uk_paging_pt_walk(uk_paging_pt_get_active(), page,
+					&level, NULL, &pte);
+		if (err || !UK_PAGING_PT_Lx_PTE_PRESENT(pte, level) ||
+		    !UK_PAGING_PAGE_Lx_IS(pte, level) ||
+		    (pte & (UK_ARCH_X86_64_PTE_PCD | UK_ARCH_X86_64_PTE_PWT)) ||
+		    (pte & (level == UK_PAGING_PAGE_LEVEL ? 0x80UL : 0x1000UL)) ||
+		    (uk_arch_x86_64_rdmsrl(UK_ARCH_X86_64_MSR_PAT) & 0xff) !=
+		    UK_ARCH_X86_64_PAT_WB) {
+			uk_pfree(c->alloc, va, pages);
+			return err ? err : -ENOTSUP;
+		}
+		if (uk_paging_virt_to_phys(page) != pa + off ||
+		    uk_paging_virt_to_phys(page + 4095) != pa + off + 4095) {
+			uk_pfree(c->alloc, va, pages);
+			return -EFAULT;
+		}
 	}
 	dma->addr = va;
 	dma->device_addr = pa;
@@ -179,7 +194,7 @@ static int dma_alloc(void *ctx, size_t size, struct mana_dma *dma)
 static void dma_free(void *ctx, struct mana_dma *dma)
 {
 	struct mana_uk_context *c = ctx;
-	uk_pfree(c->alloc, dma->addr, 1);
+	uk_pfree(c->alloc, dma->addr, dma->size / 4096);
 	memset(dma, 0, sizeof(*dma));
 }
 

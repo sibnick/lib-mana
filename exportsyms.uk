@@ -16,3 +16,12 @@ mana_control_set_rx
 mana_control_fence_rx
 mana_control_fence_complete
 mana_control_wait_fence
+mana_data_start
+mana_data_stop
+mana_data_poll
+mana_data_queue_create
+mana_data_queue_destroy
+mana_data_queue_quiesce
+mana_data_post
+mana_data_retire
+mana_data_poll_cq

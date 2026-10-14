@@ -80,6 +80,7 @@ The platform has no safe VF reset or removal recovery API.
 ## Queue ownership
 
 The caller creates DMA regions and a parent EQ outside this API.
+The [shared data queue layer](data-queues.md) supplies these resources and their complete ownership lifecycle.
 Regions must belong to the registered PD.
 The queue specification supplies region handles, byte sizes, a parent EQ ID, and a moderation context.
 The driver requests no chaining, moderation, RSS, or completion coalescing.
@@ -126,6 +127,7 @@ A missing completion, polling error, or clock error quarantines control and its 
 RX destroy requires both disabled steering and a completed fence.
 
 `mana_control_stop()` requires all queue objects to have ended.
+It also requires the shared data queue context to release its EQ and all backing regions.
 It disables RX and deregisters the device.
 A failed start can still own device registration.
 Call stop after a failed start unless control is quarantined.

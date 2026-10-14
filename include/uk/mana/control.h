@@ -46,7 +46,7 @@ struct mana_control {
 	uint32_t link_speed_mbps, qos_speed_mbps;
 	uint16_t max_ports, frame_mtu, mtu, tx_vport_offset;
 	unsigned char mac[6];
-	unsigned int registered, configured, ready, quarantined;
+	unsigned int registered, configured, ready, quarantined, data_owned;
 	unsigned int rx_enabled, short_form_allowed;
 	int link_query_error;
 };

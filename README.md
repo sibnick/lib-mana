@@ -1,7 +1,7 @@
 # Unikraft MANA driver
 
 This project targets the Azure MANA VF (`1414:00ba`) on x86_64 KVM.
-The code implements PCI probe, GDMA/HWC bootstrap, and MANA device and port control.
+The code implements PCI probe, GDMA/HWC bootstrap, MANA control, and shared data queue infrastructure.
 It **does not provide a network interface**.
 Production bootstrap rejects DMA unless `LIBMANA_DIRECT_DMA` enables an explicit deployment contract.
 This option is disabled by default.
@@ -24,6 +24,7 @@ The MVP does not promise network continuity during VF removal.
 | `src/mana.c` | Build metadata |
 | `src/pci.c`, `src/gdma.c` | PCI resources, MSI-X, SMC, HWC rings, and GDMA discovery |
 | `include/uk/mana/control.h`, `src/control.c` | Device discovery, port setup, link events, and queue object control |
+| `include/uk/mana/data_queue.h`, `src/data_queue.c` | Registered data rings, data EQ/CQ polling, and generic GDMA WQE submission |
 | `src/platform_unikraft.c` | Pinned x86_64 KVM platform and PCI driver registration |
 | `tests/test_scaffold.c` | Host header and library smoke test |
 | `tests/host/`, `tests/test_host.c` | Test runner, fault points, MMIO, allocation, and clock foundation |
@@ -34,6 +35,7 @@ The MVP does not promise network continuity during VF removal.
 | `docs/platform.md` | Platform API findings and implementation constraints |
 | `docs/bootstrap.md`, `tests/test_bootstrap.c` | Bootstrap contract, source pin, and focused protocol tests |
 | `docs/control.md`, `tests/test_control.c` | Control contract, source pin, ownership, and focused tests |
+| `docs/data-queues.md`, `tests/test_data_queue.c` | Shared queue ownership, packet worker boundary, and focused tests |
 
 ## Host checks
 
@@ -91,4 +93,5 @@ PCI/GDMA ticket `64fdb04ff0` covers the implemented bootstrap paths.
 See [Bootstrap](docs/bootstrap.md) for source evidence, tests, and remaining hardware gates.
 Control ticket `6684b33f38` adds source-defined device and port operations.
 See [Control](docs/control.md) for queue ownership and the TX/RX worker boundary.
+See [Shared data queues](docs/data-queues.md) for the TX/RX prerequisite API and DMA release rules.
 TX/RX, `uknetdev`, full device mocks, and Azure validation remain separate tickets.
