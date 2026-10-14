@@ -16,6 +16,10 @@ struct fixture {
 	uint32_t failure, timeout;
 	unsigned int no_fence, bad_fence, drain_packet, destroys, mismatch;
 	unsigned int fail_enable;
+	unsigned int large_alloc_calls, packet_allocations, packet_frees;
+	unsigned int frees_at_destroy;
+	int (*dma_alloc)(void *, size_t, struct mana_dma *);
+	void (*dma_free)(void *, struct mana_dma *);
 	void (*write64)(void *, const struct mana_mapping *, uint64_t, uint64_t);
 };
 
@@ -115,7 +119,7 @@ static int respond(void *ctx, const unsigned char *req, size_t size,
 		break;
 	case 0x20006:
 		if (!f->no_fence && code != f->failure && code != f->timeout) {
-			if (f->drain_packet)
+			for (i = 0; i < f->drain_packet; i++)
 				completion(f, 1, 60);
 			mana_put32(completion(f, 3, 0),
 				   f->bad_fence ? 0x143 : 0x43);
@@ -123,6 +127,7 @@ static int respond(void *ctx, const unsigned char *req, size_t size,
 		break;
 	case 0x20005:
 		f->destroys++;
+		f->frees_at_destroy = f->packet_frees;
 		break;
 	default:
 		abort();
@@ -447,6 +452,64 @@ static int empty_fifo(void)
 	return 0;
 }
 
+/* Keep the shared host model's bounded allocation table unchanged. */
+static int large_alloc(void *ctx, size_t size, struct mana_dma *dma)
+{
+	struct fixture *f = ctx;
+	void *addr;
+	if (++f->large_alloc_calls <= 2)
+		return f->dma_alloc(ctx, size, dma);
+	addr = aligned_alloc(4096, size);
+	if (!addr)
+		return -ENOMEM;
+	memset(addr, 0, size);
+	*dma = (struct mana_dma) {
+		.addr = addr, .size = size,
+		.device_addr = UINT64_C(0x8000000000000000) +
+			(uint64_t)f->packet_allocations * 4096
+	};
+	f->packet_allocations++;
+	return 0;
+}
+
+static void large_free(void *ctx, struct mana_dma *dma)
+{
+	struct fixture *f = ctx;
+	if (dma->device_addr < UINT64_C(0x8000000000000000)) {
+		f->dma_free(ctx, dma);
+		return;
+	}
+	free(dma->addr);
+	memset(dma, 0, sizeof(*dma));
+	f->packet_frees++;
+}
+
+static int fence_backlog(void)
+{
+	struct fixture f;
+	struct mana_rx_slot *slots;
+	uint64_t before;
+	TEST_CHECK(init(&f) == 0);
+	slots = calloc(10000, sizeof(*slots));
+	TEST_CHECK(slots != NULL);
+	f.dma_alloc = f.model.platform.dma_alloc;
+	f.dma_free = f.model.platform.dma_free;
+	f.model.platform.dma_alloc = large_alloc;
+	f.model.platform.dma_free = large_free;
+	TEST_CHECK(mana_rx_start(&f.rx, &f.data, slots, 10000,
+				 512 * 1024, 1024 * 1024) == 0);
+	TEST_CHECK(f.packet_allocations == 10000);
+	f.drain_packet = 10000;
+	before = f.model.host.now_us;
+	TEST_CHECK(mana_rx_stop(&f.rx) == 0);
+	TEST_CHECK(f.packet_frees == 10000 && f.frees_at_destroy == 10000);
+	TEST_CHECK(f.destroys == 1 && !f.control.quarantined);
+	TEST_CHECK(f.model.host.now_us - before < UINT64_C(1000000));
+	TEST_CHECK(end(&f, 0) == 0);
+	free(slots);
+	return 0;
+}
+
 int main(void)
 {
 	static const struct host_test tests[] = {
@@ -460,6 +523,7 @@ int main(void)
 		{ "RX create, steering, and invalid DMA start failures", start_errors },
 		{ "Delivered packet release remains safe after RX quarantine", quarantine_delivery },
 		{ "RX rejects completion without an outstanding FIFO buffer", empty_fifo },
+		{ "RX shutdown reaches fence behind 10000 completed packets", fence_backlog },
 	};
 	return host_test_run(tests, sizeof(tests) / sizeof(tests[0]));
 }

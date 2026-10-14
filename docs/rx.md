@@ -113,6 +113,9 @@ Do not apply TX offset rules to RX.
 It quiesces the shared queue and sends the RX fence command.
 The HWC acknowledgment alone never completes shutdown.
 The bounded control wait services ordinary RX completions and the data CQ fence.
+Each service call drains available completions until empty or fenced, with a one-CQ-ring bound.
+This bound covers all posted buffers and the reserved fence entry.
+Already completed packets do not consume one timed wait step each.
 During shutdown, RX discards ordinary packets rather than transferring new ownership.
 Only `mana_data_poll_cq` with `MANA_DATA_RX_FENCE` completes the fence.
 The shared layer checks fence type 3, client type 1, zero vendor error, WQ identity, and RQ direction.
@@ -143,6 +146,7 @@ The tests check golden one-SGE fields, synthetic DMA addresses, packet transfer,
 They check FIFO and ring wrap through all owner values, rejected full WQs, and explicit refill retry.
 They cover malformed lengths, identities, owners, headers, reserved fields, and posted records.
 They cover truncated packets, unsupported types, allocation failures, missing fences, malformed fences, and uncertain destroy.
+Shutdown also reaches a valid fence behind 10000 ordinary packet completions without exhausting the timed wait.
 Firmware failures retain ownership for retry.
 
 Run `make test`, `make test-sanitize`, and `make unikraft-test`.

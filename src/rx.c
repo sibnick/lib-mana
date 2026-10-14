@@ -199,9 +199,21 @@ int mana_rx_poll(struct mana_rx *rx, struct mana_rx_packet *packet)
 
 static int fence_poll(void *ctx)
 {
+	struct mana_rx *rx = ctx;
 	struct mana_rx_packet packet = { 0 };
-	int err = mana_rx_poll(ctx, &packet);
-	return err < 0 ? err : 0;
+	uint32_t i, limit = (uint32_t)rx->queue.cq.dma.size / 64;
+	int err;
+	/* One CQ ring covers all posted buffers plus the reserved fence entry.
+	 * Do not spend the fence wait budget on already available packets.
+	 */
+	for (i = 0; i < limit; i++) {
+		err = mana_rx_poll(rx, &packet);
+		if (err < 0)
+			return err;
+		if (err == MANA_RX_EMPTY || err == MANA_RX_FENCE)
+			return 0;
+	}
+	return 0;
 }
 
 int mana_rx_stop(struct mana_rx *rx)
