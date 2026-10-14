@@ -19,6 +19,8 @@ The MVP does not promise network continuity during VF removal.
 | `include/uk/mana/gdma.h` | Confirmed GDMA protocol units |
 | `src/mana.c` | Build metadata, without device initialization |
 | `tests/test_scaffold.c` | Host header and library smoke test |
+| `tests/host/`, `tests/test_host.c` | Test runner, fault points, MMIO, allocation, and clock foundation |
+| `docs/host-tests.md` | Host test contracts and device model limits |
 | `tests/unikraft/` | Minimal application for the real Unikraft compile and link check |
 | `tests/test_msix.c`, `tests/msix/` | Host checks of the actual patch with IRQ and CPUID mocks |
 | `patches/` | Required local xPIC MSI-X patch |
@@ -35,6 +37,9 @@ make license-check
 ```
 
 The tests do not need Azure credentials or a network connection.
+Both host targets run the foundation self-tests.
+See [Host test foundation](docs/host-tests.md) for fault schedules and mock limits.
+These primitives do not yet emulate GDMA/HWC startup or network packets.
 `make clean` removes host test binaries. It keeps the downloaded core.
 The license check covers project-owned C headers, sources, and build scripts.
 New code uses BSD-3-Clause. Keep notices when adapting third-party code.
