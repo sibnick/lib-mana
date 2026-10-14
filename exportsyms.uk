@@ -25,3 +25,7 @@ mana_data_queue_quiesce
 mana_data_post
 mana_data_retire
 mana_data_poll_cq
+mana_tx_start
+mana_tx_submit
+mana_tx_poll
+mana_tx_stop
