@@ -8,6 +8,19 @@
 #include <uk/mana/gdma.h>
 #include <uk/mana/bootstrap.h>
 
+static inline uint16_t mana_get16(const void *v)
+{
+	const unsigned char *p = v;
+	return (uint16_t)(p[0] | (uint16_t)p[1] << 8);
+}
+
+static inline void mana_put16(void *v, uint16_t n)
+{
+	unsigned char *p = v;
+	p[0] = (unsigned char)n;
+	p[1] = (unsigned char)(n >> 8);
+}
+
 static inline uint32_t mana_get32(const void *v)
 {
 	const unsigned char *p = v;

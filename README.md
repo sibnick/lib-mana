@@ -1,7 +1,8 @@
 # Unikraft MANA driver
 
 This project targets the Azure MANA VF (`1414:00ba`) on x86_64 KVM.
-The code implements PCI probe and GDMA/HWC bootstrap, but **does not provide a network interface**.
+The code implements PCI probe, GDMA/HWC bootstrap, and MANA device and port control.
+It **does not provide a network interface**.
 Production bootstrap rejects DMA unless `LIBMANA_DIRECT_DMA` enables an explicit deployment contract.
 This option is disabled by default.
 No Azure device has validated the contract or HWC startup.
@@ -22,6 +23,7 @@ The MVP does not promise network continuity during VF removal.
 | `include/uk/mana/platform.h`, `bootstrap.h` | Platform contract, bootstrap state, and command API |
 | `src/mana.c` | Build metadata |
 | `src/pci.c`, `src/gdma.c` | PCI resources, MSI-X, SMC, HWC rings, and GDMA discovery |
+| `include/uk/mana/control.h`, `src/control.c` | Device discovery, port setup, link events, and queue object control |
 | `src/platform_unikraft.c` | Pinned x86_64 KVM platform and PCI driver registration |
 | `tests/test_scaffold.c` | Host header and library smoke test |
 | `tests/host/`, `tests/test_host.c` | Test runner, fault points, MMIO, allocation, and clock foundation |
@@ -31,6 +33,7 @@ The MVP does not promise network continuity during VF removal.
 | `patches/` | Required local xPIC MSI-X patch |
 | `docs/platform.md` | Platform API findings and implementation constraints |
 | `docs/bootstrap.md`, `tests/test_bootstrap.c` | Bootstrap contract, source pin, and focused protocol tests |
+| `docs/control.md`, `tests/test_control.c` | Control contract, source pin, ownership, and focused tests |
 
 ## Host checks
 
@@ -45,7 +48,8 @@ make license-check
 The tests do not need Azure credentials or a network connection.
 Both host targets run the foundation self-tests.
 See [Host test foundation](docs/host-tests.md) for fault schedules and mock limits.
-These primitives do not yet emulate GDMA/HWC startup or network packets.
+The reusable bootstrap model covers GDMA/HWC transport.
+Host tests do not prove DMA coherency or actual packet traffic.
 `make clean` removes host test binaries. It keeps the downloaded core.
 The license check covers project-owned C headers, sources, and build scripts.
 New code uses BSD-3-Clause. Keep notices when adapting third-party code.
@@ -85,4 +89,6 @@ The Fossil wiki pages **Azure MANA Driver Plan** and
 Scaffold ticket: `b310ab6e80`.
 PCI/GDMA ticket `64fdb04ff0` covers the implemented bootstrap paths.
 See [Bootstrap](docs/bootstrap.md) for source evidence, tests, and remaining hardware gates.
-Control, TX/RX, `uknetdev`, full device mocks, and Azure validation remain separate tickets.
+Control ticket `6684b33f38` adds source-defined device and port operations.
+See [Control](docs/control.md) for queue ownership and the TX/RX worker boundary.
+TX/RX, `uknetdev`, full device mocks, and Azure validation remain separate tickets.
