@@ -1,8 +1,10 @@
-# Unikraft MANA driver scaffold
+# Unikraft MANA driver
 
 This project targets the Azure MANA VF (`1414:00ba`) on x86_64 KVM.
-The current code is a **library scaffold, not a working network driver**.
-It does not probe PCI devices, start GDMA/HWC, or register a network interface.
+The code implements PCI probe and GDMA/HWC bootstrap, but **does not provide a network interface**.
+Production bootstrap rejects DMA unless `LIBMANA_DIRECT_DMA` enables an explicit deployment contract.
+This option is disabled by default.
+No Azure device has validated the contract or HWC startup.
 
 The MVP scope is one vPort, one TX/RX queue pair, and basic Ethernet packets.
 HWC requires at least one MSI-X vector.
@@ -17,12 +19,18 @@ The MVP does not promise network continuity during VF removal.
 | `Kraftfile` | Library metadata and exact Unikraft base |
 | `include/uk/mana.h` | Public build scope and VF identifiers |
 | `include/uk/mana/gdma.h` | Confirmed GDMA protocol units |
-| `src/mana.c` | Build metadata, without device initialization |
+| `include/uk/mana/platform.h`, `bootstrap.h` | Platform contract, bootstrap state, and command API |
+| `src/mana.c` | Build metadata |
+| `src/pci.c`, `src/gdma.c` | PCI resources, MSI-X, SMC, HWC rings, and GDMA discovery |
+| `src/platform_unikraft.c` | Pinned x86_64 KVM platform and PCI driver registration |
 | `tests/test_scaffold.c` | Host header and library smoke test |
+| `tests/host/`, `tests/test_host.c` | Test runner, fault points, MMIO, allocation, and clock foundation |
+| `docs/host-tests.md` | Host test contracts and device model limits |
 | `tests/unikraft/` | Minimal application for the real Unikraft compile and link check |
-| `tests/test_msix.c`, `tests/msix/` | Host checks of the actual patch with IRQ and CPUID mocks |
+| `tests/test_msix.c`, `tests/test_pic.c`, `tests/msix/` | Actual patch checks with IRQ, CPUID, and PIC I/O mocks |
 | `patches/` | Required local xPIC MSI-X patch |
 | `docs/platform.md` | Platform API findings and implementation constraints |
+| `docs/bootstrap.md`, `tests/test_bootstrap.c` | Bootstrap contract, source pin, and focused protocol tests |
 
 ## Host checks
 
@@ -35,6 +43,9 @@ make license-check
 ```
 
 The tests do not need Azure credentials or a network connection.
+Both host targets run the foundation self-tests.
+See [Host test foundation](docs/host-tests.md) for fault schedules and mock limits.
+These primitives do not yet emulate GDMA/HWC startup or network packets.
 `make clean` removes host test binaries. It keeps the downloaded core.
 The license check covers project-owned C headers, sources, and build scripts.
 New code uses BSD-3-Clause. Keep notices when adapting third-party code.
@@ -53,11 +64,14 @@ This command downloads the pinned public source, checks its SHA-256 checksum,
 applies the patch, configures the test application, and builds an x86_64 KVM image.
 It also checks the patched MSI-X source with mock IRQ and CPUID APIs.
 These checks cover APIC address encoding, IRQ bounds, and allocation failures.
+The actual patched PIC source also runs under UBSan.
+It checks legacy IRQ 15 and MSI-X boundaries 16, 20, and 207.
 It needs `curl`, `tar`, `sha256sum`, `patch`, and the Unikraft build tools.
 Install GCC, binutils, flex, bison, m4, and Python 3 before this check.
 The build selects GNU C11 because this core predates GCC's default C23 mode.
 The test references the PCI registration and MSI-X symbols to check their ABI.
-It never programs a PCI device.
+The smoke application does not emulate or attach a MANA device.
+The linked PCI driver rejects device DMA unless the deployment option is enabled.
 The local patch and configuration support single-core guests only.
 
 The generated tree and image stay under `build/`.
@@ -69,6 +83,6 @@ To rebuild the image without fetching the core again, run `make unikraft-test`.
 The Fossil wiki pages **Azure MANA Driver Plan** and
 **MANA and GDMA Protocol Research** define the work order and protocol sources.
 Scaffold ticket: `b310ab6e80`.
-PCI/GDMA ticket `64fdb04ff0` must implement platform DMA ownership, resource
-validation, MSI-X table programming, bounded HWC startup, and failure cleanup.
+PCI/GDMA ticket `64fdb04ff0` covers the implemented bootstrap paths.
+See [Bootstrap](docs/bootstrap.md) for source evidence, tests, and remaining hardware gates.
 Control, TX/RX, `uknetdev`, full device mocks, and Azure validation remain separate tickets.

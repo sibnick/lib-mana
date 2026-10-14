@@ -5,3 +5,6 @@ CINCLUDES-$(CONFIG_LIBMANA) += -I$(LIBMANA_BASE)/include
 CXXINCLUDES-$(CONFIG_LIBMANA) += -I$(LIBMANA_BASE)/include
 
 LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/mana.c
+LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/pci.c
+LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/gdma.c
+LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/platform_unikraft.c

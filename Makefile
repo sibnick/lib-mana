@@ -4,8 +4,13 @@ PYTHON ?= python3
 CPPFLAGS += -Iinclude
 CFLAGS ?= -O2 -g
 WARNINGS = -std=c11 -Wall -Wextra -Werror -pedantic
-SOURCES = src/mana.c
-HEADERS = $(wildcard include/uk/*.h include/uk/mana/*.h)
+SOURCES = src/mana.c src/pci.c src/gdma.c
+HEADERS = $(wildcard include/uk/*.h include/uk/mana/*.h src/*.h)
+HOST_SUPPORT = tests/host/mock.c
+HOST_HEADERS = $(wildcard tests/host/*.h)
+HOST_TESTS = scaffold host bootstrap
+HOST_BINARIES = $(addprefix build/test_,$(HOST_TESTS))
+HOST_SANITIZERS = $(addsuffix _sanitize,$(HOST_BINARIES))
 ROOT := $(CURDIR)
 UK_BUILD := $(ROOT)/build/unikraft-test
 UK_MAKE = $(MAKE) -C $(ROOT)/build/unikraft A=$(ROOT)/tests/unikraft \
@@ -14,22 +19,23 @@ UK_MAKE = $(MAKE) -C $(ROOT)/build/unikraft A=$(ROOT)/tests/unikraft \
 .PHONY: all test test-sanitize sanitize license-check clean prepare-unikraft test-msix unikraft-test
 all: test
 
-build/test_scaffold: tests/test_scaffold.c $(SOURCES) $(HEADERS) Makefile
+build/test_%: tests/test_%.c $(SOURCES) $(HEADERS) $(HOST_SUPPORT) $(HOST_HEADERS) Makefile
 	@mkdir -p build
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) $(SOURCES) $< $(LDFLAGS) $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) $(SOURCES) $(HOST_SUPPORT) $< \
+		$(LDFLAGS) $(LDLIBS) -o $@
 
-build/test_scaffold_sanitize: tests/test_scaffold.c $(SOURCES) $(HEADERS) Makefile
+build/test_%_sanitize: tests/test_%.c $(SOURCES) $(HEADERS) $(HOST_SUPPORT) $(HOST_HEADERS) Makefile
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -O0 -fsanitize=address,undefined \
-		-fno-omit-frame-pointer $(SOURCES) $< $(LDFLAGS) \
+		-fno-omit-frame-pointer $(SOURCES) $(HOST_SUPPORT) $< $(LDFLAGS) \
 		-fsanitize=address,undefined $(LDLIBS) -o $@
 
-test: license-check build/test_scaffold
-	./build/test_scaffold
+test: license-check $(HOST_BINARIES)
+	@set -e; for test in $(HOST_BINARIES); do ./$$test; done
 
 sanitize: test-sanitize
-test-sanitize: license-check build/test_scaffold_sanitize
-	./build/test_scaffold_sanitize
+test-sanitize: license-check $(HOST_SANITIZERS)
+	@set -e; for test in $(HOST_SANITIZERS); do ./$$test; done
 
 license-check:
 	$(PYTHON) scripts/check-license.py
@@ -43,6 +49,13 @@ test-msix: prepare-unikraft license-check
 		tests/test_msix.c build/unikraft/drivers/ukintctlr/xpic/msix.c \
 		$(LDFLAGS) $(LDLIBS) -o build/test_msix
 	./build/test_msix
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -fsanitize=undefined \
+		-fno-sanitize-recover=undefined -Itests/msix/include \
+		-Ibuild/unikraft/arch/x86/x86_64/include \
+		-Ibuild/unikraft/drivers/ukintctlr/xpic \
+		tests/test_pic.c build/unikraft/drivers/ukintctlr/xpic/pic.c \
+		$(LDFLAGS) $(LDLIBS) -o build/test_pic
+	./build/test_pic
 
 unikraft-test: test-msix
 	$(UK_MAKE) UK_DEFCONFIG=$(ROOT)/tests/unikraft/defconfig defconfig
@@ -51,4 +64,4 @@ unikraft-test: test-msix
 	$(UK_MAKE) -j2
 
 clean:
-	$(RM) build/test_scaffold build/test_scaffold_sanitize build/test_msix
+	$(RM) $(HOST_BINARIES) $(HOST_SANITIZERS) build/test_msix build/test_pic

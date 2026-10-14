@@ -27,6 +27,13 @@ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 
-The local MSI-X patch uses the same BSD-3-Clause license. It retains the
+The new MSI-X source uses the same BSD-3-Clause license. It retains the
 Unikraft copyright notice from the lib-ena reference patch. The upstream
-Unikraft tree keeps its own per-file licenses. No Linux source is vendored.
+Unikraft tree keeps its own per-file licenses.
+The PIC guard changes retain that file's ISC license and copyright notices.
+
+The GDMA wire implementation in `src/gdma.c` follows the Linux MANA sources
+under their BSD-3-Clause option.
+Copyright (c) 2021, Microsoft Corporation.
+The BSD-3-Clause terms and disclaimer above apply to this implementation.
+No complete Linux source files are vendored.

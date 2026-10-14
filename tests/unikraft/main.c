@@ -6,6 +6,7 @@
 #include <uk/intctlr/msix.h>
 #include <uk/mana.h>
 #include <uk/mana/gdma.h>
+#include <uk/mana/bootstrap.h>
 #include <uk/netdev_driver.h>
 
 /* Keep references so the link checks the platform ABI without running it. */
@@ -14,14 +15,18 @@ static int (*volatile msix_alloc_api)(unsigned int, unsigned int *,
 static int (*volatile msix_free_api)(unsigned int) = uk_intctlr_msix_free;
 static void (*volatile pci_register_api)(struct pci_driver *) =
 	_pci_register_driver;
+static struct mana_bootstrap *(*volatile bootstrap_api)(void) =
+	mana_unikraft_bootstrap;
+static int (*volatile stop_api)(void) = mana_unikraft_stop;
 
 int main(int argc __unused, char *argv[] __unused)
 {
-	if (!msix_alloc_api || !msix_free_api || !pci_register_api)
+	if (!msix_alloc_api || !msix_free_api || !pci_register_api ||
+	    !bootstrap_api || !stop_api)
 		return 1;
-	printf("MANA scaffold %04x:%04x, GDMA page %u, Unikraft %s\n",
+	printf("MANA bootstrap %04x:%04x, GDMA page %u, Unikraft %s\n",
 	       mana_build_info.pci_vendor_id, mana_build_info.pci_device_id,
 	       MANA_GDMA_PAGE_SIZE, mana_build_info.unikraft_revision);
-	printf("Scaffold only: no PCI probe or network interface.\n");
+	printf("No network interface. Direct DMA needs a checked deployment contract.\n");
 	return 0;
 }

@@ -1,1 +1,7 @@
 mana_build_info
+mana_bootstrap_start
+mana_bootstrap_stop
+mana_bootstrap_poll
+mana_hwc_request
+mana_unikraft_bootstrap
+mana_unikraft_stop
