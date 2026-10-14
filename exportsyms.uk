@@ -25,3 +25,8 @@ mana_data_queue_quiesce
 mana_data_post
 mana_data_retire
 mana_data_poll_cq
+mana_rx_start
+mana_rx_poll
+mana_rx_refill
+mana_rx_packet_release
+mana_rx_stop
