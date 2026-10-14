@@ -29,3 +29,8 @@ mana_tx_start
 mana_tx_submit
 mana_tx_poll
 mana_tx_stop
+mana_rx_start
+mana_rx_poll
+mana_rx_refill
+mana_rx_packet_release
+mana_rx_stop

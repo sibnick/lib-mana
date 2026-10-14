@@ -10,6 +10,7 @@
 #include <uk/mana/control.h>
 #include <uk/mana/data_queue.h>
 #include <uk/mana/tx.h>
+#include <uk/mana/rx.h>
 #include <uk/netdev_driver.h>
 
 /* Keep references so the link checks the platform ABI without running it. */
@@ -32,12 +33,14 @@ static int (*volatile data_api)(struct mana_data *, struct mana_control *,
 			       uint32_t) = mana_data_start;
 static int (*volatile tx_api)(struct mana_tx *, const void *, uint32_t, void *) =
 	mana_tx_submit;
+static int (*volatile rx_api)(struct mana_rx *, struct mana_rx_packet *) =
+	mana_rx_poll;
 
 int main(int argc __unused, char *argv[] __unused)
 {
 	if (!msix_alloc_api || !msix_free_api || !pci_register_api ||
 	    !bootstrap_api || !stop_api || !control_api || !queue_api || !data_api ||
-	    !tx_api)
+	    !tx_api || !rx_api)
 		return 1;
 	printf("MANA bootstrap %04x:%04x, GDMA page %u, Unikraft %s\n",
 	       mana_build_info.pci_vendor_id, mana_build_info.pci_device_id,
