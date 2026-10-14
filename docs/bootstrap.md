@@ -3,7 +3,8 @@
 ## Implementation boundary
 
 The driver matches only Microsoft MANA VF `1414:00ba`.
-It implements HWC bootstrap, not MANA port configuration or a network interface.
+This module implements HWC bootstrap.
+The [netdev integration](netdev.md) starts control and registers the network interface after bootstrap succeeds.
 It uses one interrupt vector, one in-flight command, and six contiguous 4 KiB DMA pages.
 Four pages hold EQ, CQ, RQ, and SQ rings.
 Two pages hold the response and request messages.
@@ -81,7 +82,8 @@ Bootstrap stop returns `-EBUSY` until control releases device ownership.
 
 `mana_unikraft_bootstrap()` returns driver-owned state, including quarantined state.
 It returns NULL when no device remains claimed.
-`mana_unikraft_stop()` shuts down the claimed device.
+`mana_unikraft_stop()` stops RX, TX, shared data queues, control, and then bootstrap.
+It stops at the first teardown error and retains remaining resources.
 A Unikraft termination callback also calls this function.
 No application or network interface may free driver-owned state.
 

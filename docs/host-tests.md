@@ -14,6 +14,8 @@ make test-sanitize
 ```
 
 Both targets run the scaffold checks, foundation self-tests, and bootstrap regression cases.
+Both targets also run the netdev suite against the pinned uknetdev and netbuf sources.
+The netdev suite needs the prepared source cache or an explicit `UK_SOURCE` path.
 The sanitizer target uses AddressSanitizer and UndefinedBehaviorSanitizer.
 Add host suites to `HOST_TESTS` in the root Makefile.
 Name each suite `tests/test_<name>.c`.
@@ -50,13 +52,14 @@ Require zero at successful teardown to detect missing driver cleanup.
 | Fault points | Separate allocation, MMIO-read, and MMIO-write counters |
 | Fault schedule | Fail only the selected one-based call with a negative error |
 | Fault reset | Arming a point resets its counter. Call zero disables failure. |
-| Allocations | Zeroed C11 aligned memory, with 16 tracked live slots |
+| Allocations | Zeroed C11 aligned memory, with 128 tracked live slots |
 | Device addresses | Synthetic addresses start at `0x100000000` and never use CPU pointer values |
 | Free | Require the recorded CPU address, size, and device address |
 | MMIO | Byte-backed 8 KiB test region with aligned 32-bit and 64-bit little-endian access |
 | Virtual time | Microsecond counter advances only on explicit calls |
 
 Allocation sizes must be nonzero multiples of a power-of-two alignment.
+The allocation limit permits both default netdev queues, their rings, and bootstrap memory at the same time.
 Alignment must be at least `sizeof(void *)`.
 Synthetic address allocation checks alignment and address overflow.
 Invalid calls and injected failures leave output values and resources unchanged.

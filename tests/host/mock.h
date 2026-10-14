@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define HOST_MOCK_BAR_SIZE 8192U
-#define HOST_MOCK_DMA_SLOTS 16U
+#define HOST_MOCK_DMA_SLOTS 128U
 
 enum host_fault_point {
 	HOST_FAULT_ALLOC,

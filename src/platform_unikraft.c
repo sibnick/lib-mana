@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 #include "internal.h"
+#include <uk/mana/netdev.h>
 
 #include <uk/alloc.h>
 #include <uk/arch/util.h>
@@ -19,6 +20,7 @@ struct mana_uk_context {
 	struct uk_alloc *alloc;
 	struct mana_platform platform;
 	struct mana_bootstrap bootstrap;
+	struct mana_netdev netdev;
 	void (*handler)(void *);
 	void *handler_arg;
 	unsigned int irq_registered;
@@ -301,7 +303,7 @@ static int mana_add(struct pci_device *device)
 {
 	struct mana_uk_context *c = &mana_uk;
 	int err;
-	if (c->claimed)
+	if (c->claimed || c->netdev.registered)
 		return -EBUSY;
 	c->claimed = 1;
 	c->device = device;
@@ -325,11 +327,25 @@ static int mana_add(struct pci_device *device)
 		return -ENOTSUP;
 	}
 	err = mana_bootstrap_start(&c->bootstrap, &c->platform);
+	if (!err) {
+		err = mana_netdev_register(&c->netdev, &c->bootstrap, c->alloc);
+		if (err >= 0)
+			err = 0;
+		else {
+			int cleanup = mana_netdev_shutdown(&c->netdev);
+			if (!cleanup)
+				cleanup = mana_bootstrap_stop(&c->bootstrap);
+			if (cleanup)
+				uk_pr_err("MANA: add cleanup retained resources: %d\n",
+					  cleanup);
+		}
+	}
 	if (err) {
 		/* PCI core frees its pci_device after add_dev returns an error.
 		 * Keep its address in driver storage if DMA remains quarantined.
 		 */
-		if (c->bootstrap.quarantined) {
+		if (c->bootstrap.quarantined || c->bootstrap.control_owned ||
+		    c->bootstrap.config_owned) {
 			static struct pci_device retained;
 			retained = *device;
 			c->device = &retained;
@@ -340,7 +356,7 @@ static int mana_add(struct pci_device *device)
 		}
 		return err;
 	}
-	uk_pr_info("MANA: GDMA version 1 and HWC ready, MANA device 0x%x\n",
+	uk_pr_info("MANA: uknetdev registered, MANA device 0x%x\n",
 		   c->bootstrap.mana_device_id);
 	device->state = PCI_DEVICE_STATE_RUNNING;
 	return 0;
@@ -369,7 +385,9 @@ int mana_unikraft_stop(void)
 	int err;
 	if (!mana_uk.claimed)
 		return 0;
-	err = mana_bootstrap_stop(&mana_uk.bootstrap);
+	err = mana_netdev_shutdown(&mana_uk.netdev);
+	if (!err)
+		err = mana_bootstrap_stop(&mana_uk.bootstrap);
 	if (!err) {
 		if (mana_uk.device)
 			mana_uk.device->state = PCI_DEVICE_STATE_RESET;

@@ -11,4 +11,5 @@ LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/control.c
 LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/data_queue.c
 LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/tx.c
 LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/rx.c
+LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/netdev.c
 LIBMANA_SRCS-y += $(LIBMANA_BASE)/src/platform_unikraft.c
