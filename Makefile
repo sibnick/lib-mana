@@ -6,7 +6,7 @@ CFLAGS ?= -O2 -g
 WARNINGS = -std=c11 -Wall -Wextra -Werror -pedantic
 SOURCES = src/mana.c src/pci.c src/gdma.c
 HEADERS = $(wildcard include/uk/*.h include/uk/mana/*.h src/*.h)
-HOST_SUPPORT = tests/host/mock.c
+HOST_SUPPORT = tests/host/mock.c tests/host/bootstrap.c
 HOST_HEADERS = $(wildcard tests/host/*.h)
 HOST_TESTS = scaffold host bootstrap
 HOST_BINARIES = $(addprefix build/test_,$(HOST_TESTS))
