@@ -202,6 +202,20 @@ static int owner(struct mana_data *d, const unsigned char *entry,
 	return 1;
 }
 
+/*
+ * The pin routes these service and failure event types away.
+ * They are types 129 to 135 and 176 from enum gdma_eqe_type.
+ * The pin has a context callback or device service work for them.
+ * This library has neither, so a defined type keeps the quarantine
+ * path. Types the pin does not define carry no service meaning.
+ * The pin ignores them (gdma_main.c mana_gd_process_eqe default).
+ * Do the same here so one benign event cannot poison the context.
+ */
+static int eq_type_is_service(uint32_t type)
+{
+	return (type >= 129 && type <= 135) || type == 176;
+}
+
 int mana_data_poll(struct mana_data *d)
 {
 	uint32_t i, entries, info;
@@ -243,7 +257,11 @@ int mana_data_poll(struct mana_data *d)
 			d->test_seen = 1;
 			break;
 		default:
-			return poison(d, "unsupported data EQ event", -ENOTSUP);
+			if (eq_type_is_service(info & 0xff))
+				return poison(d, "unsupported data EQ event",
+					      -ENOTSUP);
+			d->unknown_events++;
+			break;
 		}
 		d->eq_head++;
 	}

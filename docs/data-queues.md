@@ -99,7 +99,16 @@ The deployment evidence in [Bootstrap](bootstrap.md) remains mandatory.
 `mana_data_poll` processes at most one EQ ring.
 Completion events must identify a live data CQ.
 They set `queue.notified` without processing packet completions.
-Unknown events, invalid CQ IDs, reserved bits, and invalid owners quarantine the context.
+An event with an event type that the pinned GDMA header does not define is ignored.
+The layer counts it in `data.unknown_events`, advances the EQ head, and keeps polling.
+This matches the silent default case of `mana_gd_process_eqe` in the pinned source.
+The pinned adapter EQ sets no service callback, so the pin also drops such events there.
+A benign or newer firmware event therefore cannot poison the shared context.
+Stop and shutdown stay recoverable.
+Event types 129 through 135 and 176 are defined in the pin for device service or failure handling.
+This library has no service or reset handler, so those types keep the quarantine path.
+That keeps their intended fatal semantics.
+Invalid CQ IDs, reserved bits, and invalid owners still quarantine the context.
 The layer processes data events separately from the HWC CQ.
 
 `mana_data_poll_cq(q, completion)` returns 1, 0, or a negative errno.
@@ -193,6 +202,8 @@ Its deterministic model checks exact GDMA request bytes and device IDs.
 It checks multi-page lists, consumed handles, separate data doorbells, ring wrap, all owner bits, and typed completions.
 It covers every ring allocation failure, malformed events, invalid IDs, bounds, full WQs, and invalid DMA.
 It also covers firmware retry, uncertain registration/create/destroy results, fence validation, and EQ timeout bounds.
+It proves the layer ignores and counts undefined EQ event types, keeps polling, and keeps teardown clean.
+It also proves pinned service and failure event types still quarantine the context.
 The existing host and control suites remain in the test targets.
 
 Run `make test`, `make test-sanitize`, and `make unikraft-test`.
