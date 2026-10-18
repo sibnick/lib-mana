@@ -534,10 +534,16 @@ void host_device_note_queue(struct host_device *dev, struct mana_data_queue *q)
 
 void host_device_forget_queue(struct host_device *dev, struct mana_data_queue *q)
 {
-	unsigned int slot = q->object.type == MANA_CONTROL_TX ? 0 : 1;
+	unsigned int i;
 
-	dev->queue[slot].queue = NULL;
-	dev->queue[slot].exists = 0;
+	/* Match the stored pointer. The driver zeroes the queue struct
+	 * during destroy, so its type field is no longer trustworthy here.
+	 */
+	for (i = 0; i < 2; i++)
+		if (dev->queue[i].queue == q) {
+			dev->queue[i].queue = NULL;
+			dev->queue[i].exists = 0;
+		}
 }
 
 void host_device_tick(struct host_device *dev, uint64_t us)
