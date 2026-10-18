@@ -57,5 +57,14 @@ void host_bootstrap_init(struct host_bootstrap *model,
 			 enum host_bootstrap_fault fault);
 uint32_t host_bootstrap_config(const struct host_bootstrap *model,
 			      unsigned int offset, unsigned int width);
+/* Complete the doorbelled control request. Used by the synchronous model and
+ * by the asynchronous device model at the scheduled device time.
+ */
+void host_bootstrap_request(struct host_bootstrap *model);
+/* Write one bootstrap EQ event with correct owner bits at the model
+ * producer. The asynchronous device model schedules this at a later time.
+ */
+void host_bootstrap_event(struct host_bootstrap *model, uint32_t type,
+			  uint32_t data);
 
 #endif

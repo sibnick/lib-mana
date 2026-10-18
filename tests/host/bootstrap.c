@@ -76,7 +76,7 @@ static uint32_t read32(void *ctx, const struct mana_mapping *m, uint64_t off)
 	return (uint32_t)v;
 }
 
-static void event(struct host_bootstrap *f, uint32_t type, uint32_t data)
+void host_bootstrap_event(struct host_bootstrap *f, uint32_t type, uint32_t data)
 {
 	unsigned char *eq = f->b.pages[MANA_HWC_EQ].addr;
 	unsigned char *entry = eq + (f->eq_producer % 256) * 16;
@@ -113,7 +113,7 @@ static void establish(struct host_bootstrap *f)
 		f->mismatch = 1;
 	if (f->fault == HOST_BOOTSTRAP_NO_INIT)
 		return;
-	event(f, 129, f->fault == HOST_BOOTSTRAP_BAD_DB ? 0xffff0009U : 9);
+	host_bootstrap_event(f, 129, f->fault == HOST_BOOTSTRAP_BAD_DB ? 0xffff0009U : 9);
 	for (i = 0; i < 11; i++) {
 		uint32_t v = init[i];
 		if (f->fault == HOST_BOOTSTRAP_MISSING_INIT && i == 2)
@@ -122,13 +122,13 @@ static void establish(struct host_bootstrap *f)
 			v = 639;
 		if (f->fault == HOST_BOOTSTRAP_BAD_CQ && i == 0)
 			v = 32;
-		event(f, 130, ((i + 1) << 24) | v);
+		host_bootstrap_event(f, 130, ((i + 1) << 24) | v);
 		if (f->fault == HOST_BOOTSTRAP_DUP_INIT && i == 0)
-			event(f, 130, (1U << 24) | v);
+			host_bootstrap_event(f, 130, (1U << 24) | v);
 	}
-	event(f, 131, 0);
+	host_bootstrap_event(f, 131, 0);
 	if (f->fault == HOST_BOOTSTRAP_UNKNOWN_EVENT)
-		event(f, 255, 0);
+		host_bootstrap_event(f, 255, 0);
 	if (f->fault == HOST_BOOTSTRAP_BAD_OWNER)
 		mana_put32((unsigned char *)f->b.pages[0].addr + 12,
 			   129 | (3U << 29));
@@ -161,7 +161,12 @@ static void write32(void *ctx, const struct mana_mapping *m, uint64_t off,
 	}
 }
 
-static void request(struct host_bootstrap *f)
+/*
+ * Complete the control request that the driver last doorbelled. The synchronous
+ * model calls it inside the doorbell. The asynchronous device model schedules
+ * it at a later device time. See tests/host/device.h.
+ */
+void host_bootstrap_request(struct host_bootstrap *f)
 {
 	const unsigned char *tx = f->b.pages[MANA_HWC_TX].addr;
 	unsigned char *rx = f->b.pages[MANA_HWC_RX].addr;
@@ -197,7 +202,7 @@ static void request(struct host_bootstrap *f)
 	    device_instance == 0) {
 		if (mana_get32(tx + 40) != 9)
 			f->mismatch = 1;
-		event(f, 64, 0);
+		host_bootstrap_event(f, 64, 0);
 		err = 0;
 	} else if (err == -ENOTSUP && type == 1 && device_type == 0 &&
 		   device_instance == 0) {
@@ -236,7 +241,7 @@ static void request(struct host_bootstrap *f)
 		   (f->fault == HOST_BOOTSTRAP_SHORT_RESPONSE ? 31 : (uint32_t)length));
 	if (f->fault != HOST_BOOTSTRAP_NO_TX)
 		completion(f, 1, sqoff, 0);
-	event(f, 3, f->fault == HOST_BOOTSTRAP_WRONG_QUEUE ? 32 : 5);
+	host_bootstrap_event(f, 3, f->fault == HOST_BOOTSTRAP_WRONG_QUEUE ? 32 : 5);
 	if (f->fault != HOST_BOOTSTRAP_NO_IRQ)
 		f->handler(f->arg);
 }
@@ -256,7 +261,7 @@ static void write64(void *ctx, const struct mana_mapping *m, uint64_t off,
 	if (off == 0x1000) {
 		if ((v & 0xffffff) != 7 || (uint32_t)(v >> 32) != f->b.sq_head * 32)
 			f->mismatch = 1;
-		request(f);
+		host_bootstrap_request(f);
 	}
 }
 
