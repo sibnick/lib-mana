@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-3-Clause
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    name: Host suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: License check
+        run: make license-check
+      - name: Host suites
+        run: make test
+
+  sanitize:
+    name: Sanitizers
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Address and undefined sanitizers
+        run: make test-sanitize
+
+  unikraft:
+    name: Unikraft kernel
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: MSI-X and PIC tests plus kernel build
+        run: make unikraft-test

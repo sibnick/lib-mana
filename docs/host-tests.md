@@ -122,10 +122,9 @@ They must not create a successful firmware response.
 Tests can write a source-defined firmware status to test driver error handling.
 The hook does not supply MANA command definitions or asynchronous event scheduling.
 Add only responses that follow the pinned protocol source.
-Control, TX, and RX coverage belongs to later slices.
 `tests/test_data_queue.c` adds shared ring ownership, GDMA registration, data doorbell, and fence checks.
 It does not emulate packet traffic.
-The full ticket remains open.
+Use the async device model below for timed device behavior.
 
 Use the authoritative Linux definitions for each added protocol behavior.
 `docs/bootstrap.md` records the source pin.
@@ -138,3 +137,60 @@ The Fossil wiki page **MANA and GDMA Protocol Research** records the checked pro
 Do not treat foundation self-tests as proof of HWC startup or Azure network operation.
 These original test sources use the project's BSD-3-Clause license.
 They contain no copied Linux source.
+
+## Asynchronous device model
+
+`tests/host/device.h` exposes the async device model `struct host_device`.
+The model wraps the synchronous bootstrap transport.
+A doorbell records the write and schedules timed device work.
+The device produces EQ entries and CQ entries later, on its own clock.
+This proves the driver waits for asynchronous completion.
+Call `host_device_attach(model, dev)` before `mana_bootstrap_start`.
+The attach replaces the platform doorbell, delay, and respond hooks.
+Restore them with `host_device_detach(dev)` after the bootstrap stops.
+
+Time advances through two paths:
+
+1. `host_device_tick(dev, us)` moves the device clock and runs due work.
+2. The driver `delay_us` call advances the same clock inside polling loops.
+
+The model runs inline in the test thread.
+It starts no threads and reads no wall clock.
+One attached fixture routes at a time.
+
+Call `host_device_note_data(dev, data)` before `mana_data_start`.
+The device answers the EQ self-test inside that call.
+Bind queue storage with `host_device_note_queue(dev, q)` after create.
+The device learns queue ids from the CREATE_WQ exchange.
+Call `host_device_forget_queue(dev, q)` after the destroy completes.
+
+| Control | Device behavior |
+|---|---|
+| `host_device_eqe(dev, type, data)` | One data EQ entry at the event latency |
+| `host_device_bootstrap_event(dev, type, data)` | One bootstrap EQ event, for example type 133 link state |
+| `host_device_rx_inject(dev, frame, size)` | One RX frame into the oldest posted buffer |
+| `host_device_stall_data(dev, on)` | Hold all data-path work while set |
+| `host_device_hold_tx(dev, true)` | Skip the next TX WQE instead of completing it |
+| `host_device_duplicate_tx(dev)` | Write a second TX CQE for one WQE |
+| `host_device_late(dev, extra_us)` | Add latency to the next data completion |
+| `host_device_error_vendor(dev, left)` | Put a vendor error into the next TX CQE |
+| `host_device_rx_drop(dev)` | Mark the next RX CQE as a dropped frame |
+| `host_device_cqe_fault(dev, fault)` | Corrupt the next CQE id, client bits, owner, or direction |
+
+The model records `tx_frames`, the last captured TX frame, guard counts,
+dropped work, and unknown doorbells for assertions.
+Ring overrun guards reschedule the work instead of skipping an owner bit.
+The data suites and `tests/test_e2e.c` show the intended use.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs the same gates on every push and pull request:
+
+1. Host suites: `make test` plus `make license-check`.
+2. Sanitizers: `make test-sanitize`.
+3. Unikraft kernel build: `make unikraft-test`, which also runs the MSI-X
+   and PIC tests.
+
+The jobs use `ubuntu-latest` with the default `cc`.
+The netdev and Unikraft targets download the pinned source cache.
+
