@@ -808,6 +808,68 @@ static int bad_events(void)
 	return 0;
 }
 
+static int unknown_eq_events(void)
+{
+	struct fixture f;
+	struct mana_data_completion completion;
+	struct mana_data_sge sge = { 4096, 0x91, 1500 };
+	unsigned char oob[8] = { 0 };
+	struct mana_data_work work = { &sge, 1, 0x2a, oob, 8 };
+	struct mana_data_posted posted;
+	static const uint32_t types[] = {
+		1, 2, 5, 63, 65, 100, 128, 136, 175, 177, 200, 255
+	};
+	uint32_t i;
+	TEST_CHECK(start(&f) == 0);
+	TEST_CHECK(mana_data_queue_create(&f.data, &f.tx, MANA_CONTROL_TX,
+					  4096, 4096) == 0);
+	TEST_CHECK(mana_data_queue_create(&f.data, &f.rx, MANA_CONTROL_RX,
+					  4096, 4096) == 0);
+	for (i = 0; i < 12; i++) {
+		eq_event(&f, types[i], 0);
+		eq_event(&f, 3, i & 1 ? 11 : 10);
+		TEST_CHECK(mana_data_poll(&f.data) == 0);
+		TEST_CHECK(f.data.unknown_events == i + 1);
+		TEST_CHECK(!f.data.quarantined && !f.control.quarantined);
+		TEST_CHECK(f.data.ready);
+		TEST_CHECK(i & 1 ? f.rx.notified : f.tx.notified);
+	}
+	/* Full EQ rings of undefined events drain across the owner wrap.
+	 * Each batch stays inside the 256-entry ring capacity.
+	 */
+	for (i = 0; i < 230; i++)
+		eq_event(&f, 255, 0);
+	TEST_CHECK(mana_data_poll(&f.data) == 0);
+	for (i = 0; i < 200; i++)
+		eq_event(&f, 255, 0);
+	TEST_CHECK(mana_data_poll(&f.data) == 0);
+	for (i = 0; i < 256; i++)
+		eq_event(&f, 255, 0);
+	TEST_CHECK(mana_data_poll(&f.data) == 0);
+	TEST_CHECK(mana_data_poll(&f.data) == 0);
+	TEST_CHECK(f.data.unknown_events == 698);
+	/* Completion events and CQ polling still work after the ignore. */
+	eq_event(&f, 3, 10);
+	TEST_CHECK(mana_data_poll(&f.data) == 0);
+	cqe(&f.tx, 0x60, 21 | (1U << 24));
+	TEST_CHECK(mana_data_poll_cq(&f.tx, &completion) == 1);
+	TEST_CHECK(completion.wq_id == 21 && completion.is_sq);
+	TEST_CHECK(mana_data_post(&f.tx, &work, &posted) == 0);
+	TEST_CHECK(mana_data_retire(&f.tx, &posted) == 0);
+	/* Stop and shutdown stay recoverable after an undefined event. */
+	eq_event(&f, 42, 0);
+	TEST_CHECK(mana_data_queue_quiesce(&f.tx) == 0);
+	TEST_CHECK(mana_data_queue_destroy(&f.tx) == 0);
+	TEST_CHECK(mana_data_queue_quiesce(&f.rx) == 0);
+	TEST_CHECK(mana_control_fence_rx(&f.rx.object) == 0);
+	cqe(&f.rx, 0x43, 22);
+	TEST_CHECK(mana_data_poll_cq(&f.rx, &completion) == 1);
+	TEST_CHECK(completion.kind == MANA_DATA_RX_FENCE);
+	eq_event(&f, 3, 11);
+	TEST_CHECK(mana_data_queue_destroy(&f.rx) == 0);
+	return stop(&f);
+}
+
 static int eq_timeout(void)
 {
 	struct fixture f;
@@ -841,6 +903,7 @@ int main(void)
 		{ "Unknown destroy results retain regions and DMA", uncertain_cleanup },
 		{ "Invalid identifiers and duplicate handles quarantine", invalid_resources },
 		{ "Malformed owners, events, CQ IDs, and RX fence", bad_events },
+		{ "Undefined EQ event types stay ignored and recoverable", unknown_eq_events },
 		{ "Bounded EQ test timeout and stalled clock", eq_timeout }
 	};
 	return host_test_run(tests, sizeof(tests) / sizeof(tests[0]));

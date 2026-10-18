@@ -33,7 +33,8 @@ struct mana_data {
 	struct mana_control *control;
 	struct mana_data_region eq;
 	struct mana_data_queue *queues[2];
-	uint32_t eq_id, eq_head, regions;
+	/* unknown_events counts ignored EQ events with undefined types. */
+	uint32_t eq_id, eq_head, regions, unknown_events;
 	unsigned int eq_live, ready, quarantined, test_seen;
 };
 
@@ -75,6 +76,9 @@ int mana_data_start(struct mana_data *d, struct mana_control *c,
 int mana_data_stop(struct mana_data *d);
 /* Process at most one EQ ring. CQ notifications set queue.notified.
  * Poll each live CQ independently. IRQ callbacks only record delivery.
+ * Events with event types the pin does not define are ignored and
+ * counted in unknown_events. Pinned service and failure types keep
+ * the quarantine path.
  */
 int mana_data_poll(struct mana_data *d);
 int mana_data_queue_create(struct mana_data *d, struct mana_data_queue *q,
