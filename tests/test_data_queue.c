@@ -975,6 +975,46 @@ static int unknown_eq_events(void)
 	return stop(&f);
 }
 
+/* Service EQE types 129, 130, 131, 133, 134, and 176 are ignored and counted.
+ * The pinned adapter EQ sets no service callback, so the pin drops these
+ * types there (mana_en.c:1812, gdma_main.c:942-949). The device reconfig
+ * type 132 keeps the poison path because the pin reacts with device service
+ * work that this library does not have (gdma_main.c:956-971). The reset
+ * request type 135 poison stays covered in the bad-events test.
+ */
+static int service_eq_events(void)
+{
+	struct fixture f;
+	static const uint32_t tolerated[] = { 129, 130, 131, 133, 134, 176 };
+	uint32_t i;
+	TEST_CHECK(start(&f) == 0);
+	TEST_CHECK(mana_data_queue_create(&f.data, &f.tx, MANA_CONTROL_TX,
+					  4096, 4096) == 0);
+	for (i = 0; i < 6; i++) {
+		eq_event(&f, tolerated[i], 0);
+		TEST_CHECK(mana_data_poll(&f.data) == 0);
+		TEST_CHECK(f.data.service_events == i + 1);
+		TEST_CHECK(f.data.unknown_events == 0);
+		TEST_CHECK(!f.data.quarantined && !f.control.quarantined);
+		TEST_CHECK(f.data.ready);
+	}
+	/* Completion events still notify after the tolerated types. */
+	eq_event(&f, 3, 10);
+	TEST_CHECK(mana_data_poll(&f.data) == 0);
+	TEST_CHECK(f.tx.notified);
+	/* Stop and shutdown stay recoverable after the tolerated types. */
+	eq_event(&f, 42, 0);
+	TEST_CHECK(mana_data_queue_quiesce(&f.tx) == 0);
+	TEST_CHECK(mana_data_queue_destroy(&f.tx) == 0);
+	TEST_CHECK(stop(&f) == 0);
+	/* The device reconfig type 132 still poisons the shared context. */
+	TEST_CHECK(start(&f) == 0);
+	eq_event(&f, 132, 0);
+	TEST_CHECK(mana_data_poll(&f.data) == -ENOTSUP);
+	TEST_CHECK(discard(&f, 7) == 0);
+	return 0;
+}
+
 /* One poll drains a mixed EQ batch and rings the EQ doorbell once. */
 static int eq_batch(void)
 {
@@ -1089,6 +1129,7 @@ int main(void)
 		{ "Invalid identifiers and duplicate handles quarantine", invalid_resources },
 		{ "Malformed owners, events, CQ IDs, and RX fence", bad_events },
 		{ "Undefined EQ event types stay ignored and recoverable", unknown_eq_events },
+		{ "Service EQ events stay ignored and recoverable", service_eq_events },
 		{ "One EQ poll drains a mixed batch with one doorbell", eq_batch },
 		{ "CQ head wraps the 32-bit counter with fresh owners", cq_wrap32 },
 		{ "Bounded EQ test timeout and stalled clock", eq_timeout }

@@ -45,6 +45,10 @@ struct mana_bootstrap {
 	uint32_t eq_head, cq_head, rq_head, sq_head;
 	uint32_t init_seen;
 	uint32_t rx_offset;
+	/* ignored_events counts EQ events the pinned dispatcher ignores
+	 * or routes to a handler that has no effect on this platform.
+	 */
+	uint32_t ignored_events;
 	volatile unsigned int interrupts;
 	uint32_t msix_saved[4];
 	uint32_t bar_saved[6], bar_dirty;

@@ -717,7 +717,12 @@ static int async_events(void)
 {
 	struct fixture f;
 	unsigned int i;
-	static const uint32_t errors[] = { 132, 134, 135, 255 };
+	/* The pin reacts to 132 and 135 with device service work that this
+	 * library lacks. Those two keep the sticky error. The pin ignores
+	 * 134, 176, undefined types, and unknown reconfig subfields.
+	 */
+	static const uint32_t kept[] = { 132, 135 };
+	static const uint32_t tolerated[] = { 134, 176, 255 };
 	init(&f);
 	TEST_CHECK(start(&f) == 0);
 	event(&f, 133, (2U << 24) | 99);
@@ -729,19 +734,36 @@ static int async_events(void)
 	event(&f, 133, (1U << 24) | 0xffffff);
 	TEST_CHECK(mana_control_poll(&f.control) == 0);
 	TEST_CHECK(f.model.b.link_generation == 2);
+	/* An unknown reconfig subfield stays counted and ignored. */
+	event(&f, 133, 4U << 24);
+	TEST_CHECK(mana_control_poll(&f.control) == 0);
+	TEST_CHECK(f.model.b.ignored_events == 1);
+	TEST_CHECK(f.model.b.link_known && f.model.b.link_generation == 2);
+	event(&f, 134, 0);
+	event(&f, 176, 0);
+	event(&f, 255, 0);
+	TEST_CHECK(mana_control_poll(&f.control) == 0);
+	TEST_CHECK(f.model.b.ignored_events == 4);
+	TEST_CHECK(!f.model.b.error && !f.model.b.quarantined);
 	TEST_CHECK(stop(&f) == 0);
-	for (i = 0; i < sizeof(errors) / sizeof(errors[0]); i++) {
+	for (i = 0; i < sizeof(kept) / sizeof(kept[0]); i++) {
 		init(&f);
 		TEST_CHECK(start(&f) == 0);
-		event(&f, errors[i], 0);
-		TEST_CHECK(mana_control_poll(&f.control) == (errors[i] == 255 ? -EPROTO : -ENOTSUP));
+		event(&f, kept[i], 0);
+		TEST_CHECK(mana_control_poll(&f.control) == -ENOTSUP);
+		TEST_CHECK(f.model.b.ignored_events == 0);
 		TEST_CHECK(discard_quarantined_model(&f) == 0);
 	}
-	init(&f);
-	TEST_CHECK(start(&f) == 0);
-	event(&f, 133, 4U << 24);
-	TEST_CHECK(mana_control_poll(&f.control) == -ENOTSUP);
-	return discard_quarantined_model(&f);
+	for (i = 0; i < sizeof(tolerated) / sizeof(tolerated[0]); i++) {
+		init(&f);
+		TEST_CHECK(start(&f) == 0);
+		event(&f, tolerated[i], 0);
+		TEST_CHECK(mana_control_poll(&f.control) == 0);
+		TEST_CHECK(f.model.b.ignored_events == 1);
+		TEST_CHECK(!f.model.b.error && !f.model.b.quarantined);
+		TEST_CHECK(stop(&f) == 0);
+	}
+	return 0;
 }
 
 /* Short, newer-version, and dirty-word responses follow the pin. A short

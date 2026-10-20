@@ -134,8 +134,15 @@ static void establish(struct host_bootstrap *f)
 			host_bootstrap_event(f, 130, (1U << 24) | v);
 	}
 	host_bootstrap_event(f, 131, 0);
-	if (f->fault == HOST_BOOTSTRAP_UNKNOWN_EVENT)
+	if (f->fault == HOST_BOOTSTRAP_UNKNOWN_EVENT) {
+		/* The pin ignores undefined types (gdma_main.c:973-974)
+		 * and service events without a local consumer
+		 * (hw_channel.c:215-236). Inject all three classes.
+		 */
 		host_bootstrap_event(f, 255, 0);
+		host_bootstrap_event(f, 134, 1);
+		host_bootstrap_event(f, 176, 0);
+	}
 	if (f->fault == HOST_BOOTSTRAP_BAD_OWNER)
 		mana_put32((unsigned char *)f->b.pages[0].addr + 12,
 			   129 | (3U << 29));

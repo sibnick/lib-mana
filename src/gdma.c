@@ -251,7 +251,14 @@ int mana_bootstrap_poll(struct mana_bootstrap *b)
 			b->test_event = !err;
 			break;
 		case 133:
-			/* A timeout update does not change this driver's bound. */
+			/*
+			 * Subfield 1 updates a timeout bound this driver
+			 * fixes at compile time. Subfields 2 and 3 record
+			 * the link state. The pin logs a warning and
+			 * ignores an unknown reconfig subfield
+			 * (mana_hwc_init_event_handler, hw_channel.c:209-211).
+			 * Do the same.
+			 */
 			switch (data >> 24) {
 			case 1:
 				break;
@@ -262,18 +269,41 @@ int mana_bootstrap_poll(struct mana_bootstrap *b)
 				b->link_generation++;
 				break;
 			default:
-				err = -ENOTSUP;
+				b->ignored_events++;
 				break;
 			}
 			break;
 		case 132:
-		case 134:
 		case 135:
-			/* No safe VF reset or service recovery exists on this platform. */
+			/*
+			 * No safe VF reset or service recovery exists on
+			 * this platform. The pin does not ignore these
+			 * events. It schedules the device service and
+			 * reset procedure (mana_gd_process_eqe,
+			 * gdma_main.c:956-971). Keep the sticky error.
+			 */
 			err = -ENOTSUP;
 			break;
+		case 134:
+		case 176:
+			/*
+			 * SOC service (134) returns success when no RDMA
+			 * client is attached (mana_rdma_service_event,
+			 * mana_en.c:4053-4061) and the handler warns and
+			 * ignores unknown service types
+			 * (hw_channel.c:227-229). QP fatal (176) reaches
+			 * the handler default, which ignores the event
+			 * (hw_channel.c:233-236). Count and ignore both.
+			 */
+			b->ignored_events++;
+			break;
 		default:
-			err = -EPROTO;
+			/*
+			 * The EQ dispatcher ignores types outside its
+			 * enum (mana_gd_process_eqe default,
+			 * gdma_main.c:973-974). Do the same.
+			 */
+			b->ignored_events++;
 			break;
 		}
 		if (err)

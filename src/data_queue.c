@@ -211,17 +211,22 @@ static int owner(struct mana_data *d, const unsigned char *entry,
 }
 
 /*
- * The pin routes these service and failure event types away.
- * They are types 129 to 135 and 176 from enum gdma_eqe_type.
- * The pin has a context callback or device service work for them.
- * This library has neither, so a defined type keeps the quarantine
- * path. Types the pin does not define carry no service meaning.
- * The pin ignores them (gdma_main.c mana_gd_process_eqe default).
- * Do the same here so one benign event cannot poison the context.
+ * The pin routes these defined types to device service or failure
+ * handling: 129 to 135 and 176 from enum gdma_eqe_type (gdma.h:59-70).
+ * The pinned adapter EQ sets no service callback (mana_en.c:1812), and
+ * the dispatcher drops those types when the callback is absent
+ * (mana_gd_process_eqe, gdma_main.c:942-949). The data EQ here is the
+ * same shape, so the pin drops them too. FPGA reconfig (132) and reset
+ * request (135) are different. The pin runs the device service and reset
+ * procedure for them (gdma_main.c:956-971). This library has no such
+ * procedure, so those two types keep the quarantine path. Types outside
+ * the enum carry no service meaning and stay ignored
+ * (gdma_main.c:973-974).
  */
 static int eq_type_is_service(uint32_t type)
 {
-	return (type >= 129 && type <= 135) || type == 176;
+	return type == 129 || type == 130 || type == 131 ||
+		type == 133 || type == 134 || type == 176;
 }
 
 int mana_data_poll(struct mana_data *d)
@@ -265,10 +270,13 @@ int mana_data_poll(struct mana_data *d)
 			d->test_seen = 1;
 			break;
 		default:
-			if (eq_type_is_service(info & 0xff))
-				return poison(d, "unsupported data EQ event",
+			if ((info & 0xff) == 132 || (info & 0xff) == 135)
+				return poison(d, "data EQ service reset",
 					      -ENOTSUP);
-			d->unknown_events++;
+			if (eq_type_is_service(info & 0xff))
+				d->service_events++;
+			else
+				d->unknown_events++;
 			break;
 		}
 		d->eq_head++;

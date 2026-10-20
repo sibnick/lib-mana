@@ -99,14 +99,15 @@ The deployment evidence in [Bootstrap](bootstrap.md) remains mandatory.
 `mana_data_poll` processes at most one EQ ring.
 Completion events must identify a live data CQ.
 They set `queue.notified` without processing packet completions.
-An event with an event type that the pinned GDMA header does not define is ignored.
-The layer counts it in `data.unknown_events`, advances the EQ head, and keeps polling.
+Service event types 129, 130, 131, 133, 134, and 176 are ignored and counted in `data.service_events`.
+An event type that the pinned GDMA header does not define is ignored and counted in `data.unknown_events`.
+The layer advances the EQ head and keeps polling.
 This matches the silent default case of `mana_gd_process_eqe` in the pinned source.
 The pinned adapter EQ sets no service callback, so the pin also drops such events there.
 A benign or newer firmware event therefore cannot poison the shared context.
 Stop and shutdown stay recoverable.
-Event types 129 through 135 and 176 are defined in the pin for device service or failure handling.
-This library has no service or reset handler, so those types keep the quarantine path.
+Device reconfiguration type 132 and reset request type 135 keep the quarantine path.
+The pin handles them with adapter repair or device reset work that this library does not have.
 That keeps their intended fatal semantics.
 Invalid CQ IDs, reserved bits, and invalid owners still quarantine the context.
 The layer processes data events separately from the HWC CQ.

@@ -33,8 +33,11 @@ struct mana_data {
 	struct mana_control *control;
 	struct mana_data_region eq;
 	struct mana_data_queue *queues[2];
-	/* unknown_events counts ignored EQ events with undefined types. */
-	uint32_t eq_id, eq_head, regions, unknown_events;
+	/* unknown_events counts ignored EQ events with undefined types.
+	 * service_events counts defined service types the pinned
+	 * dispatcher drops on an EQ without a service callback.
+	 */
+	uint32_t eq_id, eq_head, regions, unknown_events, service_events;
 	unsigned int eq_live, ready, quarantined, test_seen;
 };
 
