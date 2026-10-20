@@ -202,3 +202,37 @@ Keep rationale for the zero-length type 1 case: the pin does not retire,
 which breaks its own one-CQE-one-buffer match. The library retires to keep
 its FIFO invariant, documented in `docs/rx.md`.
 
+## 10. Inventory-only items
+
+These strict rules are inventoried and kept without code change.
+
+| Item | Driver rule | Pin rule | Decision |
+|---|---|---|---|
+| `hwc_msg_id` and `activity_id` constant zero | The driver sends zero and requires the echo to be zero. | The pin allocates a fresh in-flight id per message (`mana_hwc_get_msg_index`, `hw_channel.c:9-30`), increments `activity_id` (`mana_en.c:1088-1092`), and routes by the echoed id (`hw_channel.c:284-287`). | KEEP-AND-DOCUMENT |
+| `moderation_context` range | Not validated against `limits.cq_mod_contexts`. | Also unvalidated; firmware rejects bad values. | KEEP-AND-DOCUMENT |
+| Queue size upper bound | `create_queue` checks the power-of-two and the 4096 floor only. | Sizes are caller policy; firmware rejects bad values. | KEEP-AND-DOCUMENT |
+| `GDMA_STATUS_MORE_ENTRIES` 0x105 response status | Any nonzero status fails the command. | The GDMA layer accepts this status for HWC requests (`hw_channel.c:923`, `gdma.h:12`). The MANA layer still fails any nonzero status (`mana_en.c:1096-1103`). | KEEP (MANA layer rule, pin-equivalent) |
+| RX fence CQE with extra header bits, or an unsolicited fence | Data layer poison. | The pin completes the fence event with no field checks (`mana_en.c:2378-2380`). | KEEP-AND-DOCUMENT |
+
+Constant ids: zero ids are self-consistent with the one in-flight request
+this driver enforces. There is no hardware evidence that Azure firmware
+accepts constant ids. Azure gate: `50b980feba` must capture a real
+registration with the constant zero pair.
+
+Moderation context: a bad value is a deterministic firmware rejection of the
+create command. A caller-side bound against `cq_mod_contexts` would be a
+usability improvement, not a tolerance. Track it with the queue API work.
+
+Queue sizes: the create path sends the caller sizes and a firmware rejection
+is deterministic. The 32-bit request fields cannot overflow. The datapath
+layers bound the sizes again at queue start.
+
+## Evidence and limits
+
+Every rule above cites pinned Linux file and line references from commit
+`0fcb05b72344`. The five ticket reviews in unversioned storage under
+`reviews/` motivated the case list.
+
+Host tests prove each decision in both directions: a TOLERATE case must
+complete or continue, and each KEEP case still rejects. Run `make test` and
+`make test-sanitize`.
