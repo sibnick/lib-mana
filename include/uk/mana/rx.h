@@ -27,6 +27,11 @@ struct mana_rx {
 	uint32_t capacity, first, count, buffer_size;
 	unsigned int ready, stopping, quarantined;
 	uint64_t delivered, dropped;
+	/* unknown_completions counts CQEs with a type outside the pinned
+	 * RX switch. The layer skips them without retiring a buffer,
+	 * like mana_process_rx_cqe (mana_en.c:2382-2387).
+	 */
+	uint32_t unknown_completions;
 };
 
 enum mana_rx_result {

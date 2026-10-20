@@ -265,7 +265,7 @@ static int drops(void)
 static int malformed(void)
 {
 	unsigned int fault;
-	for (fault = 0; fault < 12; fault++) {
+	for (fault = 0; fault < 8; fault++) {
 		struct fixture f;
 		struct mana_rx_packet packet = { 0 };
 		unsigned char *entry;
@@ -273,18 +273,14 @@ static int malformed(void)
 		TEST_CHECK(start(&f) == 0);
 		entry = completion(&f, 1, 60);
 		switch (fault) {
-		case 0: mana_put32(entry, 0x141); break;
-		case 1: mana_put32(entry, 0x42); break;
-		case 2: mana_put32(entry, 0x47); break;
-		case 3: mana_put32(entry, 0x60); break;
-		case 4: mana_put32(entry + 60, 23 | 1U << 29); break;
-		case 5: mana_put32(entry + 60, 22 | 1U << 24 | 1U << 29); break;
-		case 6: mana_put32(entry + 60, 22 | 3U << 29); break;
-		case 7: mana_put32(entry + 4, 1U << 15); break;
-		case 8: mana_put16(entry + 10, 1); break;
-		case 9: mana_put32(entry + 12, 1); break;
-		case 10: f.slots[0].posted.offset = 32; break;
-		case 11: f.slots[0].posted.basic_units = 2; break;
+		case 0: mana_put32(entry, 0x42); break;
+		case 1: mana_put32(entry, 0x47); break;
+		case 2: mana_put32(entry, 0x80 | 1); break;
+		case 3: mana_put32(entry + 60, 23 | 1U << 29); break;
+		case 4: mana_put32(entry + 60, 22 | 1U << 24 | 1U << 29); break;
+		case 5: mana_put32(entry + 60, 22 | 3U << 29); break;
+		case 6: f.slots[0].posted.offset = 32; break;
+		default: f.slots[0].posted.basic_units = 2; break;
 		}
 		tail = f.rx.queue.tail;
 		TEST_CHECK(mana_rx_poll(&f.rx, &packet) < 0);
@@ -292,6 +288,54 @@ static int malformed(void)
 		TEST_CHECK(f.rx.queue.tail == tail);
 		TEST_CHECK(discard(&f) == 0);
 	}
+	return 0;
+}
+
+/*
+ * Unknown RX CQE types are skipped without retiring a buffer. The
+ * pinned default case counts them and returns
+ * (mana_process_rx_cqe, mana_en.c:2382-2387). Reserved, hash, and upper
+ * length words are never read, so junk there still delivers the packet.
+ */
+static int unknown_types(void)
+{
+	static const uint32_t junk_types[] = { 0, 5, 32, 63 };
+	struct fixture f;
+	struct mana_rx_packet packet = { 0 };
+	unsigned char *entry;
+	uint32_t i;
+	TEST_CHECK(start(&f) == 0);
+	/* Junk in the never-read words must not reject a good type. */
+	entry = completion(&f, 1, 60);
+	mana_put32(entry, 0x80000141);
+	mana_put32(entry + 4, (1U << 15) | (1U << 31));
+	mana_put16(entry + 10, 7);
+	mana_put32(entry + 12, 0xdeadbeef);
+	TEST_CHECK(mana_rx_poll(&f.rx, &packet) == MANA_RX_PACKET);
+	TEST_CHECK(packet.length == 60 && !f.rx.unknown_completions);
+	TEST_CHECK(mana_rx_packet_release(&packet) == 0);
+	/* Unknown types are skipped and counted before the real one. */
+	for (i = 0; i < 4; i++)
+		completion(&f, junk_types[i], 60);
+	completion(&f, 1, 60);
+	memset(&packet, 0, sizeof(packet));
+	TEST_CHECK(mana_rx_poll(&f.rx, &packet) == MANA_RX_PACKET);
+	TEST_CHECK(f.rx.unknown_completions == 4 && f.rx.count == 2);
+	TEST_CHECK(mana_rx_packet_release(&packet) == 0);
+	/* One full ring of unknown entries drains to an empty report. */
+	for (i = 0; i < 64; i++)
+		completion(&f, 63, 60);
+	TEST_CHECK(mana_rx_poll(&f.rx, &packet) == MANA_RX_EMPTY);
+	TEST_CHECK(f.rx.unknown_completions == 68 && f.rx.count == 2);
+	TEST_CHECK(!f.rx.quarantined);
+	/* A valid completion still delivers after the junk ring. */
+	completion(&f, 1, 60);
+	memset(&packet, 0, sizeof(packet));
+	TEST_CHECK(mana_rx_poll(&f.rx, &packet) == MANA_RX_PACKET);
+	TEST_CHECK(f.rx.unknown_completions == 68 && f.rx.count == 1);
+	TEST_CHECK(mana_rx_packet_release(&packet) == 0);
+	TEST_CHECK(mana_rx_stop(&f.rx) == 0);
+	TEST_CHECK(end(&f, 0) == 0);
 	return 0;
 }
 
@@ -439,8 +483,8 @@ static int quarantine_delivery(void)
 	TEST_CHECK(start(&f) == 0);
 	completion(&f, 1, 60);
 	TEST_CHECK(mana_rx_poll(&f.rx, &packet) == MANA_RX_PACKET);
-	mana_put32(completion(&f, 1, 60), 0x141);
-	TEST_CHECK(mana_rx_poll(&f.rx, &other) == -EPROTO);
+	mana_put32(completion(&f, 1, 60), 0x42);
+	TEST_CHECK(mana_rx_poll(&f.rx, &other) == -ENOTSUP);
 	live = f.model.host.live_allocations;
 	TEST_CHECK(mana_rx_packet_release(&packet) == 0);
 	TEST_CHECK(f.model.host.live_allocations == live - 1);
@@ -601,6 +645,7 @@ int main(void)
 		{ "RX golden WQE, owner wrap, packet ownership, release after stop", lifecycle },
 		{ "RX length, truncation, and stripped VLAN drops", drops },
 		{ "RX malformed completions retain FIFO buffers", malformed },
+		{ "Unknown RX completion types are skipped and counted", unknown_types },
 		{ "Each RX ring and buffer allocation failure", allocation },
 		{ "RX refill allocation and full WQ retry preserve delivered ownership", refill },
 		{ "RX fence, clock, steering, and destroy failures", shutdown_errors },

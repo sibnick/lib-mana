@@ -446,27 +446,52 @@ static int packet_errors(void)
 	return stop(&f);
 }
 
+/*
+ * An unknown TX completion type completes the packet with an error.
+ * The pinned poll logs the type and still frees the packet
+ * (mana_poll_tx_cq, mana_en.c:2002-2011). Identity mismatches stay fatal.
+ */
+static int unknown_type(void)
+{
+	struct fixture f;
+	struct mana_tx_result result;
+	unsigned char frame[60] = { 0 };
+	static const uint32_t unknown[] = { 0, 1, 31, 42, 63 };
+	uint32_t i;
+	TEST_CHECK(start(&f, 0, 1, 8) == 0);
+	for (i = 0; i < 5; i++) {
+		TEST_CHECK(mana_tx_submit(&f.tx, frame, 60, frame) == 1);
+		completion(&f, unknown[i], 0);
+		TEST_CHECK(mana_tx_poll(&f.tx, &result) == 1);
+		TEST_CHECK(result.error == -EIO);
+		TEST_CHECK(result.type == unknown[i]);
+		TEST_CHECK(result.vendor_error == 0);
+		TEST_CHECK(result.cookie == frame);
+		TEST_CHECK(result.length == 60 && result.wire_length == 60);
+		TEST_CHECK(!f.tx.quarantined && !f.packet_live);
+	}
+	return stop(&f);
+}
+
 static int malformed(void)
 {
 	struct fixture f;
 	struct mana_tx_result result;
 	unsigned char frame[60] = { 0 }, *entry;
 	unsigned int fault;
-	for (fault = 0; fault < 10; fault++) {
+	for (fault = 0; fault < 8; fault++) {
 		TEST_CHECK(start(&f, 0, 1, 8) == 0);
 		TEST_CHECK(mana_tx_submit(&f.tx, frame, 60, frame) == 1);
 		entry = completion(&f, 32, 0);
 		switch (fault) {
-		case 0: mana_put32(entry, 0x40 | 42); break;
-		case 1: mana_put32(entry, 0x40 | 1); break;
-		case 2: mana_put32(entry, 0x80 | 32); break;
-		case 3: mana_put32(entry + 60, 1U << 29 | 1U << 24 | 22); break;
-		case 4: mana_put32(entry + 60, 1U << 29 | 21); break;
-		case 5: mana_put32(entry + 60, 3U << 29 | 1U << 24 | 21); break;
-		case 6: mana_put32(entry + 60, 1U << 29 | 1U << 25 | 1U << 24 | 21); break;
-		case 7: f.records[0].posted.offset = 32; break;
-		case 8: f.records[0].posted.basic_units = 2; break;
-		case 9: f.records[0].wire_length = 4097; break;
+		case 0: mana_put32(entry, 0x80 | 32); break;
+		case 1: mana_put32(entry + 60, 1U << 29 | 1U << 24 | 22); break;
+		case 2: mana_put32(entry + 60, 1U << 29 | 21); break;
+		case 3: mana_put32(entry + 60, 3U << 29 | 1U << 24 | 21); break;
+		case 4: mana_put32(entry + 60, 1U << 29 | 1U << 25 | 1U << 24 | 21); break;
+		case 5: f.records[0].posted.offset = 32; break;
+		case 6: f.records[0].posted.basic_units = 2; break;
+		default: f.records[0].wire_length = 4097; break;
 		}
 		TEST_CHECK(mana_tx_poll(&f.tx, &result) < 0);
 		TEST_CHECK(f.tx.queue.tail == 0 && !f.packet_frees);
@@ -645,6 +670,7 @@ int main(void)
 		{ "TX frame bounds padding and multi-page DMA", lengths },
 		{ "TX WQ and FIFO full plus owner and counter wrap", full_and_wrap },
 		{ "TX defined packet errors and vendor status", packet_errors },
+		{ "Unknown TX completion type completes the packet", unknown_type },
 		{ "TX malformed completions and posted records", malformed },
 		{ "TX packet allocation failure and contract", allocations },
 		{ "TX shutdown drain timeout clock and destroy", shutdown },

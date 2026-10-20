@@ -63,6 +63,8 @@ Existing accepted packets remain owned.
 One result returns its cookie exactly once and releases the corresponding DMA allocation.
 `result.error` reports packet failure separately from the poll return value.
 Known TX drop types or a nonzero vendor status set `result.error` to `-EIO`.
+An unknown completion type also sets `-EIO`.
+The pinned poll logs the unknown type and still frees the packet (`mana_en.c:2002-2011`).
 The result preserves the source-defined type and 24-bit vendor status.
 Packet failure also calls the platform error callback.
 It does not by itself poison the queue.
@@ -92,8 +94,9 @@ Long WQEs use two basic units.
 Poll services control and data EQ events before reading the TX CQ.
 It polls the CQ independently of notifications.
 The shared layer checks CQ owner bits, WQ identity, SQ direction, GDMA reserved bits, and MANA client type.
-TX accepts only source-defined types 32 through 41.
-An unknown type, wrong identity, or malformed owner enters quarantine without retiring the packet.
+The pinned poll logs an unknown TX completion type and still frees the packet (`mana_en.c:2002-2011`).
+This layer completes such a record with `result.error` set to `-EIO`.
+Wrong identity, client type, or a malformed owner enters quarantine without retiring the packet.
 
 Linux `mana_poll_tx_cq` uses FIFO order to match each completion to its packet.
 It does not interpret `tx_data_offset`, `tx_sgl_offset`, or `tx_wqe_offset`.

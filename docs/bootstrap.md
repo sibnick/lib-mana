@@ -83,7 +83,8 @@ The caller supplies fresh, zeroed `struct mana_bootstrap` storage.
 The caller must retain that storage until `mana_bootstrap_stop()` succeeds.
 The caller must also retain the platform callbacks and their context.
 `mana_hwc_request()` accepts a 40-byte header with request versions 1 through 5 and response versions 1 through 3.
-It validates the response header, command, device, activity ID, length, and completion queue.
+It validates the response command, version floor, message ID, device echo, activity echo, and length bounds.
+It reads neither the response header type word nor the reserved word, like the pin.
 It returns the actual response length separately.
 Calls are serialized.
 They are not safe from interrupt context.
@@ -91,6 +92,9 @@ The IRQ handler only records interrupt delivery.
 `mana_bootstrap_poll()` processes EQ and CQ data outside interrupt context.
 Later runtime users must call it to process asynchronous events.
 The control API records source-defined link events through this poll.
+The pinned EQ dispatcher ignores some event types.
+This library ignores them too and counts them in `ignored_events`.
+See [Firmware tolerance](firmware-tolerance.md) for the per-case evidence.
 See [Device and port control](control.md) for version handling and ownership rules.
 Bootstrap stop returns `-EBUSY` until control releases device ownership.
 
@@ -137,6 +141,7 @@ It applies the pinned core match rule to the id table: the VF id matches and non
 It aborts the start and quarantines a failed stop when the model drops MSI-X control writes.
 It injects each DMA allocation failure and each PCI configuration failure.
 It rejects malformed init events, bad owners, wrong queue IDs, bad message IDs, invalid lengths, and firmware errors.
+It ignores tolerated EQ event types during establish and counts them in `ignored_events`.
 It sends SMC destroy only after a validated establish and counts zero destroys for establish failures.
 It exercises owner wrap across all three owner bits.
 It checks missing interrupts, missing completions, stopped clocks, and all bounded timeout paths.

@@ -79,7 +79,7 @@ int mana_tx_start(struct mana_tx *tx, struct mana_data *data,
 	if (!data->ready || !c->ready || !records || !capacity ||
 	    capacity > wq_size / 32 || capacity > cq_size / 64 ||
 	    wq_size > 1048576 || cq_size > 1048576 ||
-	    c->tx_vport_offset > 0xfff || c->short_form_allowed > 1 ||
+	    c->tx_vport_offset > 0xfff ||
 	    c->mtu + ETH_HEADER < ETH_MIN_FRAME) {
 		err = report(tx, "TX configuration", -EINVAL);
 		tx->data = NULL;
@@ -194,10 +194,17 @@ int mana_tx_poll(struct mana_tx *tx, struct mana_tx_result *result)
 		return 0;
 	header = mana_get32(completion.data);
 	type = header & 0x3f;
+	/*
+	 * Identity fields must match. The pin warns and returns on a
+	 * mismatch (mana_poll_tx_cq, mana_en.c:1975-1979, 2014). An unknown
+	 * completion type is not fatal. The pin logs it and still frees
+	 * the packet and updates the tail (mana_en.c:2002-2011). This
+	 * layer completes the record below with error -EIO instead.
+	 */
 	if (completion.kind != MANA_DATA_COMPLETION || !completion.is_sq ||
 	    completion.wq_id != tx->queue.object.wq_id ||
-	    (header & 0xc0) != 0x40 || type < TX_OKAY || type > TX_LAST_ERROR)
-		return poison(tx, "TX completion type or identifier", -EPROTO);
+	    (header & 0xc0) != 0x40)
+		return poison(tx, "TX completion identifier", -EPROTO);
 	if (!tx->capacity || !tx->count || tx->count > tx->capacity ||
 	    tx->first >= tx->capacity)
 		return poison(tx, "TX completion without FIFO record", -EPROTO);

@@ -135,7 +135,7 @@ int mana_rx_poll(struct mana_rx *rx, struct mana_rx_packet *packet)
 {
 	struct mana_data_completion c;
 	struct mana_rx_slot *slot;
-	uint32_t header, type, length, flags;
+	uint32_t header, type, length, flags, skipped, entries;
 	int err = usable(rx);
 	if (err)
 		return err;
@@ -144,18 +144,49 @@ int mana_rx_poll(struct mana_rx *rx, struct mana_rx_packet *packet)
 	err = mana_data_poll(rx->queue.data);
 	if (err < 0)
 		return poison(rx, "RX data EQ", err);
-	err = mana_data_poll_cq(&rx->queue, &c);
-	if (err < 0)
-		return poison(rx, "RX data CQ", err);
-	if (!err)
-		return MANA_RX_EMPTY;
-	if (c.kind == MANA_DATA_RX_FENCE)
-		return MANA_RX_FENCE;
-	header = mana_get32(c.data);
-	type = header & 0x3f;
-	if (c.is_sq || c.wq_id != rx->queue.object.wq_id ||
-	    (header & ~0x3fU) != 0x40 || (type != 1 && type != 4))
-		return poison(rx, "RX completion type or identifier", -EPROTO);
+	entries = (uint32_t)rx->queue.cq.dma.size / 64;
+	for (skipped = 0;; skipped++) {
+		err = mana_data_poll_cq(&rx->queue, &c);
+		if (err < 0)
+			return poison(rx, "RX data CQ", err);
+		if (!err)
+			return MANA_RX_EMPTY;
+		if (c.kind == MANA_DATA_RX_FENCE)
+			return MANA_RX_FENCE;
+		header = mana_get32(c.data);
+		type = header & 0x3f;
+		/*
+		 * Identity fields must match. The pin returns from its RX
+		 * walk on a wrong direction or queue id (mana_poll_rx_cq,
+		 * mana_en.c:2459-2464).
+		 */
+		if (c.is_sq || c.wq_id != rx->queue.object.wq_id ||
+		    (header & 0xc0) != 0x40)
+			return poison(rx, "RX completion identifier", -EPROTO);
+		if (type == 1 || type == 4)
+			break;
+		if (type == 2 || type == 7)
+			/*
+			 * The pin parses coalesced CQEs into multiple
+			 * packets (mana_poll_rx_cq, mana_en.c:2369-2376,
+			 * 2389-2430). This layer never enables the two
+			 * coalescing flags (mana_en.c:3863-3864 shows the
+			 * pin keeps them zero). Skipping a coalesced entry
+			 * would lose more owned buffers than it frees.
+			 * Keep it fatal.
+			 */
+			return poison(rx, "RX coalesced completion", -ENOTSUP);
+		/*
+		 * The pin counts an unknown RX CQE type and returns
+		 * without retiring a buffer (mana_poll_rx_cq default,
+		 * mana_en.c:2382-2387). Do the same and keep looking.
+		 * Stop after one ring of unknown entries so a stuck
+		 * producer cannot spin this call.
+		 */
+		rx->unknown_completions++;
+		if (skipped + 1 >= entries)
+			return MANA_RX_EMPTY;
+	}
 	if (!rx->count)
 		return poison(rx, "RX completion without buffer", -EPROTO);
 	slot = &rx->slots[rx->first];
@@ -168,11 +199,10 @@ int mana_rx_poll(struct mana_rx *rx, struct mana_rx_packet *packet)
 		return poison(rx, "RX posted WQE record", -EPROTO);
 	length = mana_get16(c.data + 8);
 	flags = mana_get32(c.data + 4);
-	if (type == 1) {
-		if ((flags & ((1U << 15) | (1U << 31))) ||
-		    mana_get16(c.data + 10) || mana_get32(c.data + 12))
-			return poison(rx, "RX completion reserved fields", -EPROTO);
-	}
+	/* The pin reads only the type, length, and status bits of a
+	 * completion. It never validates the reserved or hash words
+	 * (mana_process_rx_cqe, mana_en.c:2338-2430). Do the same.
+	 */
 	err = mana_data_retire(&rx->queue, &slot->posted);
 	if (err)
 		return poison(rx, "RX WQE retirement", err);

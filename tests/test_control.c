@@ -14,7 +14,7 @@ enum mutation {
 	BAD_DB, BAD_PD, BAD_KEY, BAD_SHORTFORM, INVALID_WQ, INVALID_CQ,
 	DUPLICATE_CQ, INVALID_OBJECT, SHORT_LENGTH, FUTURE_VERSION, WRONG_DEVICE,
 	UNCONFIGURED_QOS, INVALID_INDIRECTION, LARGE_INDIRECTION,
-	HWC_WQ_COLLISION, HWC_CQ_COLLISION
+	HWC_WQ_COLLISION, HWC_CQ_COLLISION, DIRTY_HEADER
 };
 
 struct fixture {
@@ -166,10 +166,6 @@ static int respond(void *ctx, const unsigned char *req, size_t size,
 			mana_put32(resp + 36, 5);
 		mana_put64(resp + 40, f->mutation == INVALID_OBJECT ? UINT64_MAX :
 			   (type == MANA_CONTROL_TX ? TX_HANDLE : RX_HANDLE));
-		if (f->mutation == SHORT_LENGTH)
-			*length = 32;
-		if (f->mutation == FUTURE_VERSION)
-			mana_put16(resp + 8, 3);
 		if (f->mutation == WRONG_DEVICE)
 			mana_put32(resp + 16, 2);
 		break;
@@ -197,6 +193,18 @@ static int respond(void *ctx, const unsigned char *req, size_t size,
 		f->mismatch = 1;
 	if (f->status_code == code)
 		mana_put32(resp + 24, f->status);
+	/* Response header variants apply to every command in this fixture. */
+	if (f->mutation == SHORT_LENGTH)
+		*length = 32;
+	if (f->mutation == FUTURE_VERSION)
+		mana_put16(resp + 8, 3);
+	if (f->mutation == DIRTY_HEADER) {
+		/* The pin reads neither the header type word nor the
+		 * reserved word of a response. Set both to junk values.
+		 */
+		mana_put32(resp, 7);
+		mana_put32(resp + 28, 0xa5a5a5a5);
+	}
 	return 0;
 }
 
@@ -278,6 +286,7 @@ static int discovery(void)
 	TEST_CHECK(f.control.frame_mtu == 9014 && f.control.mtu == 1500);
 	TEST_CHECK(f.control.tx_vport_offset == 0x1234 && f.control.short_form_allowed);
 	TEST_CHECK(!memcmp(f.control.mac, "\x02\x11\x22\x33\x44\x55", 6));
+	TEST_CHECK(!f.control.bm_hostmode);
 	TEST_CHECK(f.control.vport == PORT_HANDLE);
 	TEST_CHECK(f.control.link_speed_mbps == 25000 && f.control.qos_speed_mbps == 50000);
 	TEST_CHECK(!f.model.b.link_known);
@@ -364,17 +373,23 @@ static int old_firmware(void)
 {
 	struct fixture f;
 	unsigned int i;
-	for (i = 0; i < 2; i++) {
+	for (i = 0; i < 3; i++) {
 		init(&f);
-		f.mutation = i ? OLD_DEVICE : ZERO_MTU;
+		f.mutation = i == 0 ? OLD_DEVICE : (i == 1 ? ZERO_MTU : NONE);
 		f.status_code = 0x2000a;
-		f.status = UINT32_MAX;
+		/* Unsupported link and any firmware status are tolerated. */
+		f.status = i == 2 ? 0x1234 : UINT32_MAX;
 		TEST_CHECK(start(&f) == 0);
-		TEST_CHECK(f.control.frame_mtu == 1514 && f.control.mtu == 1500);
-		TEST_CHECK(f.control.link_query_error == -EOPNOTSUPP);
+		if (i < 2)
+			TEST_CHECK(f.control.frame_mtu == 1514 && f.control.mtu == 1500);
+		else
+			TEST_CHECK(f.control.frame_mtu == 9014);
+		TEST_CHECK(f.control.link_query_error ==
+			   (i == 2 ? -EPROTO : -EOPNOTSUPP));
 		TEST_CHECK(!f.control.link_speed_mbps && !f.control.qos_speed_mbps);
-		TEST_CHECK(f.model.errors >= 2);
-		TEST_CHECK(mana_control_set_mtu(&f.control, 1501) == -EINVAL);
+		TEST_CHECK(f.model.errors >= 1);
+		if (i < 2)
+			TEST_CHECK(mana_control_set_mtu(&f.control, 1501) == -EINVAL);
 		TEST_CHECK(stop(&f) == 0);
 	}
 	init(&f);
@@ -393,15 +408,15 @@ static int old_firmware(void)
 static int bad_discovery(void)
 {
 	static const enum mutation mutations[] = {
-		SMALL_MTU, HOSTMODE, NO_PORTS, NO_EQS, NO_SQ, NO_RQ, ZERO_MAC,
-		MULTICAST_MAC, INVALID_PORT, BAD_DB, BAD_PD, BAD_KEY, UNCONFIGURED_QOS
+		SMALL_MTU, NO_PORTS, NO_EQS, NO_SQ, NO_RQ, INVALID_PORT,
+		BAD_DB, BAD_PD, BAD_KEY
 	};
 	struct fixture f;
 	unsigned int i;
 	for (i = 0; i < sizeof(mutations) / sizeof(mutations[0]); i++) {
 		init(&f);
 		f.mutation = mutations[i];
-		TEST_CHECK(start(&f) == (mutations[i] == UNCONFIGURED_QOS ? -EINVAL : -EPROTO));
+		TEST_CHECK(start(&f) == -EPROTO);
 		TEST_CHECK(!f.control.ready && f.control.registered);
 		TEST_CHECK(!f.control.quarantined && f.model.errors);
 		f.mutation = NONE;
@@ -414,9 +429,49 @@ static int bad_discovery(void)
 	return 0;
 }
 
+/* Start tolerates the firmware variants the pinned Linux stores. The
+ * values stay visible to the caller. The device still reaches ready.
+ */
+static int tolerated_discovery(void)
+{
+	static const enum mutation mutations[] = {
+		HOSTMODE, ZERO_MAC, MULTICAST_MAC, UNCONFIGURED_QOS
+	};
+	struct fixture f;
+	unsigned int i;
+	for (i = 0; i < sizeof(mutations) / sizeof(mutations[0]); i++) {
+		init(&f);
+		f.mutation = mutations[i];
+		TEST_CHECK(start(&f) == 0);
+		TEST_CHECK(f.control.ready && !f.control.quarantined);
+		switch (mutations[i]) {
+		case HOSTMODE:
+			TEST_CHECK(f.control.bm_hostmode == 1);
+			break;
+		case ZERO_MAC:
+			TEST_CHECK(!memcmp(f.control.mac, "\0\0\0\0\0\0", 6));
+			TEST_CHECK(f.model.errors >= 1);
+			break;
+		case MULTICAST_MAC:
+			TEST_CHECK(f.control.mac[0] == 1);
+			TEST_CHECK(f.model.errors >= 1);
+			break;
+		default:
+			TEST_CHECK(f.control.link_query_error == -EINVAL);
+			TEST_CHECK(!f.control.link_speed_mbps);
+			TEST_CHECK(!f.control.qos_speed_mbps);
+			break;
+		}
+		f.mutation = NONE;
+		TEST_CHECK(stop(&f) == 0);
+	}
+	return 0;
+}
+
 static int failed_start_commands(void)
 {
-	static const uint32_t codes[] = { 4, 0x20001, 0x20008, 0x20003, 0x20007, 0x2000a };
+	/* Query link is not here. Its failures are tolerated at start. */
+	static const uint32_t codes[] = { 4, 0x20001, 0x20008, 0x20003, 0x20007 };
 	struct fixture f;
 	unsigned int i;
 	for (i = 0; i < sizeof(codes) / sizeof(codes[0]); i++) {
@@ -480,7 +535,7 @@ static int firmware_retry(void)
 static int uncertain_create(void)
 {
 	static const enum mutation mutations[] = {
-		INVALID_WQ, INVALID_CQ, INVALID_OBJECT, SHORT_LENGTH, FUTURE_VERSION,
+		INVALID_WQ, INVALID_CQ, INVALID_OBJECT,
 		WRONG_DEVICE, HWC_WQ_COLLISION, HWC_CQ_COLLISION
 	};
 	struct fixture f;
@@ -662,7 +717,12 @@ static int async_events(void)
 {
 	struct fixture f;
 	unsigned int i;
-	static const uint32_t errors[] = { 132, 134, 135, 255 };
+	/* The pin reacts to 132 and 135 with device service work that this
+	 * library lacks. Those two keep the sticky error. The pin ignores
+	 * 134, 176, undefined types, and unknown reconfig subfields.
+	 */
+	static const uint32_t kept[] = { 132, 135 };
+	static const uint32_t tolerated[] = { 134, 176, 255 };
 	init(&f);
 	TEST_CHECK(start(&f) == 0);
 	event(&f, 133, (2U << 24) | 99);
@@ -674,29 +734,98 @@ static int async_events(void)
 	event(&f, 133, (1U << 24) | 0xffffff);
 	TEST_CHECK(mana_control_poll(&f.control) == 0);
 	TEST_CHECK(f.model.b.link_generation == 2);
+	/* An unknown reconfig subfield stays counted and ignored. */
+	event(&f, 133, 4U << 24);
+	TEST_CHECK(mana_control_poll(&f.control) == 0);
+	TEST_CHECK(f.model.b.ignored_events == 1);
+	TEST_CHECK(f.model.b.link_known && f.model.b.link_generation == 2);
+	event(&f, 134, 0);
+	event(&f, 176, 0);
+	event(&f, 255, 0);
+	TEST_CHECK(mana_control_poll(&f.control) == 0);
+	TEST_CHECK(f.model.b.ignored_events == 4);
+	TEST_CHECK(!f.model.b.error && !f.model.b.quarantined);
 	TEST_CHECK(stop(&f) == 0);
-	for (i = 0; i < sizeof(errors) / sizeof(errors[0]); i++) {
+	for (i = 0; i < sizeof(kept) / sizeof(kept[0]); i++) {
 		init(&f);
 		TEST_CHECK(start(&f) == 0);
-		event(&f, errors[i], 0);
-		TEST_CHECK(mana_control_poll(&f.control) == (errors[i] == 255 ? -EPROTO : -ENOTSUP));
+		event(&f, kept[i], 0);
+		TEST_CHECK(mana_control_poll(&f.control) == -ENOTSUP);
+		TEST_CHECK(f.model.b.ignored_events == 0);
 		TEST_CHECK(discard_quarantined_model(&f) == 0);
 	}
-	init(&f);
-	TEST_CHECK(start(&f) == 0);
-	event(&f, 133, 4U << 24);
-	TEST_CHECK(mana_control_poll(&f.control) == -ENOTSUP);
-	return discard_quarantined_model(&f);
+	for (i = 0; i < sizeof(tolerated) / sizeof(tolerated[0]); i++) {
+		init(&f);
+		TEST_CHECK(start(&f) == 0);
+		event(&f, tolerated[i], 0);
+		TEST_CHECK(mana_control_poll(&f.control) == 0);
+		TEST_CHECK(f.model.b.ignored_events == 1);
+		TEST_CHECK(!f.model.b.error && !f.model.b.quarantined);
+		TEST_CHECK(stop(&f) == 0);
+	}
+	return 0;
 }
 
-static int failed_tx_configuration(void)
+/* Short, newer-version, and dirty-word responses follow the pin. A short
+ * response fails one command and keeps control usable. The pin reads
+ * neither the response header type word nor the reserved word, and it
+ * accepts any version of at least one.
+ */
+static int response_variants(void)
 {
 	struct fixture f;
 	init(&f);
-	f.mutation = BAD_SHORTFORM;
+	TEST_CHECK(start(&f) == 0);
+	/* A short response fails only this create. Regions return. */
+	f.mutation = SHORT_LENGTH;
+	TEST_CHECK(mana_control_create_queue(&f.control, &f.tx, MANA_CONTROL_TX, &f.spec) == -EPROTO);
+	TEST_CHECK(!f.tx.control && !f.control.tx && !f.control.quarantined);
+	f.mutation = NONE;
+	TEST_CHECK(mana_control_create_queue(&f.control, &f.tx, MANA_CONTROL_TX, &f.spec) == 0);
+	/* A response version above the requested version is accepted. */
+	f.mutation = FUTURE_VERSION;
+	f.spec.wq_region++;
+	f.spec.cq_region++;
+	TEST_CHECK(mana_control_create_queue(&f.control, &f.rx, MANA_CONTROL_RX, &f.spec) == 0);
+	TEST_CHECK(f.rx.live && f.rx.handle == RX_HANDLE);
+	/* Junk in unread response words stays invisible. */
+	f.mutation = DIRTY_HEADER;
+	TEST_CHECK(mana_control_set_rx(&f.control, 1) == 0 && f.control.rx_enabled);
+	f.mutation = NONE;
+	TEST_CHECK(mana_control_set_rx(&f.control, 0) == 0);
+	TEST_CHECK(mana_control_fence_rx(&f.rx) == 0);
+	TEST_CHECK(mana_control_wait_fence(&f.rx, fence_poll, &f.rx) == 0);
+	TEST_CHECK(mana_control_destroy_queue(&f.rx) == 0);
+	TEST_CHECK(mana_control_destroy_queue(&f.tx) == 0);
+	TEST_CHECK(stop(&f) == 0);
+	/* Start with junk in unread response words reaches ready. */
+	init(&f);
+	f.mutation = DIRTY_HEADER;
+	TEST_CHECK(start(&f) == 0);
+	TEST_CHECK(f.control.ready);
+	f.mutation = NONE;
+	TEST_CHECK(stop(&f) == 0);
+	/* A short first response fails start without poisoning. */
+	init(&f);
+	f.mutation = SHORT_LENGTH;
 	TEST_CHECK(start(&f) == -EPROTO);
-	TEST_CHECK(f.control.registered && f.control.configured);
-	return discard_quarantined_model(&f);
+	TEST_CHECK(!f.control.registered && !f.control.quarantined);
+	f.mutation = NONE;
+	TEST_CHECK(stop(&f) == 0);
+	return 0;
+}
+
+static int tx_short_form_variant(void)
+{
+	struct fixture f;
+	init(&f);
+	/* The pin stores the short-form byte into a bool unsanitized. */
+	f.mutation = BAD_SHORTFORM;
+	TEST_CHECK(start(&f) == 0);
+	TEST_CHECK(f.control.ready && f.control.short_form_allowed == 1);
+	TEST_CHECK(!f.control.quarantined && f.control.configured);
+	f.mutation = NONE;
+	return stop(&f);
 }
 
 int main(void)
@@ -705,17 +834,19 @@ int main(void)
 		{ "Device, MAC, frame MTU, link speed, and registered PD", discovery },
 		{ "Exact TX/RX queue, steering, fence, and destroy wire shapes", queues },
 		{ "Invalid queue specifications do not send commands", rejected_specs },
-		{ "Source-defined old firmware MTU and unsupported link", old_firmware },
+		{ "Source-defined old firmware MTU and tolerated link status", old_firmware },
 		{ "Malformed device and port fields", bad_discovery },
+		{ "Pinned tolerant fields reach ready with values recorded", tolerated_discovery },
 		{ "Each start command failure retains explicit ownership", failed_start_commands },
 		{ "Firmware failures retain objects and permit bounded retry", firmware_retry },
 		{ "Uncertain create results quarantine DMA regions", uncertain_create },
+		{ "Short, newer, and dirty-word responses follow the pin", response_variants },
 		{ "Transport failures retain in-flight and queue ownership", transport_failures },
 		{ "Start command and deregister transport timeouts poison control", start_timeouts },
 		{ "Link re-query recovers and pre-configuration sends nothing", link_requery },
 		{ "RX fence completion and clock bounds", fence_bounds },
 		{ "Async link, timeout, reset, service, and unknown events", async_events },
-		{ "Invalid TX response retains registration", failed_tx_configuration },
+		{ "TX short-form byte above one is stored as one", tx_short_form_variant },
 	};
 	return host_test_run(cases, sizeof(cases) / sizeof(cases[0]));
 }

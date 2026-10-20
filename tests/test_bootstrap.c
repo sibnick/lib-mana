@@ -160,7 +160,6 @@ static const struct {
 	{ HOST_BOOTSTRAP_NO_IRQ, 1 },
 	{ HOST_BOOTSTRAP_NO_MANA, 1 },
 	{ HOST_BOOTSTRAP_BAD_VERSION, 1 },
-	{ HOST_BOOTSTRAP_UNKNOWN_EVENT, 1 },
 	{ HOST_BOOTSTRAP_WRONG_QUEUE, 1 },
 	{ HOST_BOOTSTRAP_SHORT_RESPONSE, 1 },
 	{ HOST_BOOTSTRAP_BAD_SMC_TYPE, 0 },
@@ -230,6 +229,25 @@ static int protocol_errors(void)
 	TEST_CHECK(f.b.quarantined && f.host.live_allocations == 6 && !f.irq_live);
 	f.unmap_fail = 0;
 	TEST_CHECK(mana_bootstrap_stop(&f.b) == 0);
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	return 0;
+}
+
+/* Events the pinned dispatcher ignores must not block readiness. The pin
+ * drops undefined types (gdma_main.c:973-974) and service events without
+ * a local consumer (hw_channel.c:215-236). This driver counts them and
+ * keeps the established channel usable.
+ */
+static int ignored_establish_events(void)
+{
+	struct host_bootstrap f;
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_UNKNOWN_EVENT);
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == 0);
+	TEST_CHECK(f.b.ready && f.b.initialized);
+	TEST_CHECK(f.b.ignored_events == 3);
+	TEST_CHECK(!f.b.error && !f.b.quarantined);
+	TEST_CHECK(mana_bootstrap_stop(&f.b) == 0);
+	TEST_CHECK(!f.b.quarantined && !f.host.live_allocations && !f.maps && !f.irq_live);
 	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
 	return 0;
 }
@@ -518,6 +536,7 @@ int main(void)
 		{"Each DMA allocation failure", allocations},
 		{"Device address 2^52 boundary before SMC packing", device_address_bound},
 		{"HWC malformed events, responses, and timeouts", protocol_errors},
+		{"Events the pin ignores do not block establish", ignored_establish_events},
 		{"SMC destroy gated by a validated establish", establish_gate},
 		{"DMA quarantine and teardown retry", quarantine},
 		{"Each PCI configuration failure", config_failures},
