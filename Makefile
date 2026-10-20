@@ -16,8 +16,15 @@ HOST_SANITIZERS = $(addsuffix _sanitize,$(HOST_BINARIES))
 ROOT := $(CURDIR)
 UK_SOURCE ?= $(ROOT)/build/unikraft
 UK_BUILD := $(ROOT)/build/unikraft-test
+# Library import excludes keep the other app tree out of each image build.
 UK_MAKE = $(MAKE) -C $(UK_SOURCE) A=$(ROOT)/tests/unikraft \
-	L=$(ROOT) O=$(UK_BUILD) C=$(UK_BUILD)/.config UK_CFLAGS=-std=gnu11
+	L=$(ROOT) E=$(ROOT)/samples/networkload \
+	O=$(UK_BUILD) C=$(UK_BUILD)/.config UK_CFLAGS=-std=gnu11
+UK_LWIP_SOURCE ?= $(ROOT)/build/lib-lwip
+WORKLOAD_BUILD := $(ROOT)/build/workload
+UK_MAKE_WORKLOAD = $(MAKE) -C $(UK_SOURCE) A=$(ROOT)/samples/networkload \
+	L=$(ROOT):$(UK_LWIP_SOURCE) E=$(ROOT)/tests/unikraft \
+	O=$(WORKLOAD_BUILD) C=$(WORKLOAD_BUILD)/.config UK_CFLAGS=-std=gnu11
 NETDEV_INCLUDES = -Itests/netdev/include \
 	$(addprefix -isystem $(UK_SOURCE)/,include arch/x86/x86_64/include \
 	arch/x86/include arch/include lib/uknetdev/include lib/ukalloc/include \
@@ -26,7 +33,9 @@ NETDEV_INCLUDES = -Itests/netdev/include \
 NETDEV_SOURCES = $(SOURCES) src/netdev.c $(HOST_SUPPORT) tests/test_netdev.c \
 	$(UK_SOURCE)/lib/uknetdev/netdev.c $(UK_SOURCE)/lib/uknetdev/netbuf.c
 
-.PHONY: all test test-sanitize sanitize license-check clean prepare-unikraft test-msix unikraft-test test-netdev test-netdev-sanitize
+.PHONY: all test test-sanitize sanitize license-check clean prepare-unikraft \
+	test-msix unikraft-test test-netdev test-netdev-sanitize \
+	prepare-lib-lwip workload-image
 all: test
 
 build/test_%: tests/test_%.c $(SOURCES) $(HEADERS) $(HOST_SUPPORT) $(HOST_HEADERS) Makefile
@@ -100,6 +109,29 @@ unikraft-test: test-msix
 	@grep -qx 'CONFIG_LIBMANA=y' $(UK_BUILD)/.config || \
 		{ echo "error: MANA was not enabled by Kconfig" >&2; exit 1; }
 	$(UK_MAKE) -j2
+
+prepare-lib-lwip:
+	@if [ "$(UK_LWIP_SOURCE)" = "$(ROOT)/build/lib-lwip" ]; then \
+		sh scripts/prepare-lib-lwip.sh; \
+	else \
+		for f in Config.uk Makefile.uk init.c uknetdev.c; do \
+			test -f "$(UK_LWIP_SOURCE)/$$f" || { \
+				echo "error: $(UK_LWIP_SOURCE) is not a lib-lwip tree: missing $$f" >&2; \
+				exit 1; \
+			}; \
+		done; \
+	fi
+
+workload-image: prepare-unikraft prepare-lib-lwip
+	$(UK_MAKE_WORKLOAD) UK_DEFCONFIG=$(ROOT)/samples/networkload/defconfig defconfig
+	@grep -qx 'CONFIG_LIBMANA=y' $(WORKLOAD_BUILD)/.config || \
+		{ echo "error: MANA was not enabled by Kconfig" >&2; exit 1; }
+	@grep -qx 'CONFIG_LIBMANA_DIRECT_DMA=y' $(WORKLOAD_BUILD)/.config || \
+		{ echo "error: direct DMA was not enabled by Kconfig" >&2; exit 1; }
+	@grep -qx 'CONFIG_LIBLWIP=y' $(WORKLOAD_BUILD)/.config || \
+		{ echo "error: lwIP was not enabled by Kconfig" >&2; exit 1; }
+	$(UK_MAKE_WORKLOAD) -j2
+	@echo "workload image: $(WORKLOAD_BUILD)/networkload_qemu-x86_64"
 
 clean:
 	$(RM) $(HOST_BINARIES) $(HOST_SANITIZERS) build/test_msix build/test_pic \

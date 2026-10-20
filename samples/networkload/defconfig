@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Single-core x86_64 KVM guest with the MANA driver and the lwIP net port.
+# Set the guest IPv4 address at boot with the uknetdev kernel parameter:
+#   netdev.ip=<ip>/<maskbits>:<gateway>
+# The pinned lib-lwip RELEASE-0.21.0 port reads this setting through the
+# uknetdev einfo mechanism. Azure SDN only routes the assigned private IP.
+# A DHCP path is not usable on the test subnet, so this sample is static-only.
+CONFIG_ARCH_X86_64=y
+CONFIG_PLAT_KVM=y
+CONFIG_KVM_VMM_QEMU=y
+CONFIG_KVM_BOOT_PROTO_MULTIBOOT=y
+CONFIG_UKPLAT_CPU_MAXCOUNT=1
+CONFIG_LIBUKALLOCBBUDDY=y
+CONFIG_LIBUKBOOT_INITBBUDDY=y
+CONFIG_LIBUKINTCTLR_APIC=y
+CONFIG_LIBUKSCHED=y
+CONFIG_LIBUKSCHEDCOOP=y
+CONFIG_LIBMANA=y
+CONFIG_LIBMANA_DIRECT_DMA=y
+CONFIG_LIBVIRTIO_NET=n
+CONFIG_LIBUKNETDEV_MAXNBQUEUES=1
+CONFIG_LIBUKNETDEV_EINFO_LIBPARAM=y
+CONFIG_LIBLWIP=y
+CONFIG_LWIP_UNIKRAFT21X=y
+CONFIG_LWIP_UKNETDEV=y
+CONFIG_LWIP_AUTOIFACE=y
+CONFIG_LWIP_FAILNOIFACE=y
+CONFIG_LWIP_THREADS=y
+CONFIG_LWIP_HEAP=y
+CONFIG_LWIP_IPV4=y
+CONFIG_LWIP_IPV6=n
+CONFIG_LWIP_TCP=y
+CONFIG_LWIP_UDP=n
+CONFIG_LWIP_ICMP=y
+CONFIG_LWIP_SOCKET=y
+CONFIG_LWIP_DNS=n
