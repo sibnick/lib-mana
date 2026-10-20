@@ -5,6 +5,12 @@
 #include "mock.h"
 #include <uk/mana/bootstrap.h>
 
+/* PF destination IDs the model sends in init fields 10 and 11. The model
+ * checks that both values reach the SQ WQE destination fields.
+ */
+#define HOST_BOOTSTRAP_INIT_PF_DEST_RQ_ID 12U
+#define HOST_BOOTSTRAP_INIT_PF_DEST_CQ_ID 13U
+
 enum host_bootstrap_fault {
 	HOST_BOOTSTRAP_NORMAL,
 	HOST_BOOTSTRAP_SMC_BUSY,

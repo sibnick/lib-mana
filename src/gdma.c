@@ -105,7 +105,9 @@ static int init_event(struct mana_bootstrap *b, uint32_t type, uint32_t data)
 		case 7: b->max_cqs = value; break;
 		case 8: b->pd_id = value; break;
 		case 9: b->mkey = value; break;
-		default: break; /* PF destination IDs are unused for a VF. */
+		/* Like the pinned hw_channel.c:169-181. */
+		case 10: b->pf_dest_vrq_id = value; break;
+		case 11: b->pf_dest_vrcq_id = value; break;
 		}
 	} else {
 		if ((b->init_seen & 0x3ff) != 0x3ff ||
@@ -315,6 +317,11 @@ int mana_hwc_request(struct mana_bootstrap *b, const void *request,
 	off = (b->sq_head * 32) & 4095;
 	memset(sq + off, 0, 64);
 	mana_put32(sq + off + 4, 1 | (6U << 8));
+	/* Destination RQ and CQ IDs follow the pinned mana_hwc_post_tx_wqe():
+	 * tx_oob->vrq_id at WQE+16 and tx_oob->vrcq_id at WQE+20.
+	 */
+	mana_put32(sq + off + 16, b->pf_dest_vrq_id);
+	mana_put32(sq + off + 20, b->pf_dest_vrcq_id);
 	mana_put32(sq + off + 24, b->cq_id);
 	mana_put32(sq + off + 28, b->sq_id);
 	mana_put64(sq + off + 32, b->pages[MANA_HWC_TX].device_addr);

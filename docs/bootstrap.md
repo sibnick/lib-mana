@@ -19,7 +19,10 @@ It verifies protocol version 1, lists GDMA devices, and queries resource limits.
 Only these completed steps set `ready`.
 No GDMA or MANA success is fabricated when a platform or protocol step fails.
 
-The VF destination queue IDs remain zero, as in the Linux VF path.
+The driver stores init fields 10 and 11, the PF destination RQ and CQ IDs.
+Every SQ WQE sends both stored values in its destination fields.
+The Linux pin stores the same fields and uses them when it builds each SQ WQE destination.
+Current PF firmware is expected to report zero for both fields.
 The driver reports OS type `Other` and advertises no unsupported driver capabilities.
 The [shared data queue layer](data-queues.md) registers separate data-queue memory regions after device control starts.
 HWC uses the bootstrap pages and the GPA memory key from its init events.
@@ -110,6 +113,8 @@ It uses the shared host allocator and the reusable synchronous model in `tests/h
 It checks the SMC address packing and emitted RX/SQ WQE fields.
 Synthetic device addresses differ from CPU pointers.
 The test also uses nonzero high page-frame nibbles.
+The model sends nonzero PF destination IDs in init fields 10 and 11.
+It checks both values in the destination of every SQ WQE.
 
 Coverage includes 32-bit and 64-bit BARs, MSI-X bounds and overlap, invalid resources, and missing DMA guarantees.
 It injects each DMA allocation failure and each PCI configuration failure.

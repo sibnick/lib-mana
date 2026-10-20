@@ -99,7 +99,9 @@ static void completion(struct host_bootstrap *f, int sq, uint32_t offset, uint32
 
 static void establish(struct host_bootstrap *f)
 {
-	static const uint32_t init[] = { 5, 6, 7, 1, 4096, 4096, 32, 3, 8, 0, 0 };
+	static const uint32_t init[] = { 5, 6, 7, 1, 4096, 4096, 32, 3, 8,
+			HOST_BOOTSTRAP_INIT_PF_DEST_RQ_ID,
+			HOST_BOOTSTRAP_INIT_PF_DEST_CQ_ID };
 	unsigned int i, j;
 	uint16_t high = f->host.bar[0x118] | (uint16_t)f->host.bar[0x119] << 8;
 	for (i = 0; i < 4; i++) {
@@ -182,6 +184,8 @@ void host_bootstrap_request(struct host_bootstrap *f)
 
 	f->requests++;
 	if (mana_get32(sq + sqoff + 4) != (1 | (6U << 8)) ||
+	    mana_get32(sq + sqoff + 16) != HOST_BOOTSTRAP_INIT_PF_DEST_RQ_ID ||
+	    mana_get32(sq + sqoff + 20) != HOST_BOOTSTRAP_INIT_PF_DEST_CQ_ID ||
 	    mana_get64(sq + sqoff + 32) != f->b.pages[MANA_HWC_TX].device_addr ||
 	    mana_get32(sq + sqoff + 40) != 8 ||
 	    mana_get32(sq + sqoff + 44) != mana_get32(tx + 12) ||

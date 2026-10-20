@@ -14,6 +14,9 @@ static int success(void)
 	f.host.next_device_address = UINT64_C(0x1234567890000000);
 	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == 0);
 	TEST_CHECK(f.b.ready && f.b.mana_device_id == 0x10002);
+	/* Init fields 10 and 11 reach the context and the SQ WQE destination. */
+	TEST_CHECK(f.b.pf_dest_vrq_id == HOST_BOOTSTRAP_INIT_PF_DEST_RQ_ID);
+	TEST_CHECK(f.b.pf_dest_vrcq_id == HOST_BOOTSTRAP_INIT_PF_DEST_CQ_ID);
 	TEST_CHECK(f.requests == 4 && !f.mismatch && f.b.limits.msix == 32);
 	TEST_CHECK(f.host.live_allocations == 6 && f.irq_live);
 	/* One initial and one re-arming RQ post per completed request.
