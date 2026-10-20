@@ -193,6 +193,31 @@ verifies that it is gone.
 - The validation window runs with the VF detached from the host.
   Nothing else on the host keeps network during that window.
 
+## Live run status: 2026-10-21, paused
+
+The first live run provisioned the test bed in westus2 (`manaval3-rg`,
+host `manaval3-host`, peer `manaval3-peer`). Results:
+
+| Check | Result |
+|---|---|
+| MANA placement on D2ds_v5 | PASS. VF 1414:00ba present at 78:00.0. |
+| Nested virtualization | PASS. /dev/kvm present on kernel 7.0.0-azure. |
+| Guest vIOMMU | FAIL. Empty /sys/class/iommu, no Hyper-V partition-IOMMU feature. |
+
+Nested VFIO is therefore blocked: without a guest IOMMU, the VF would
+DMA inner-guest addresses as host VM physical addresses. Azure exposes
+no per-VM vIOMMU switch for Linux D-series VMs. Microsoft's supported
+in-guest device access on such VMs is userspace VFIO in `noiommu` mode
+(the documented DPDK path), which has no nested VM and no cross-address
+space DMA.
+
+Decision: pause. Both VMs are deallocated. The resource group, network,
+NAT gateway, and storage account remain. Resume: start both VMs, rerun
+`scripts/azure_provision.sh` (rerunnable), then `scripts/azure_host_setup.sh`.
+Candidate paths forward: a Linux userspace VFIO runner that links the
+lib-mana sources against a `mana_platform` VFIO backend, or a platform
+that exposes a guest vIOMMU.
+
 ## Subscription constraints
 
 New subscriptions can block resources that the scripts need. Observed on
