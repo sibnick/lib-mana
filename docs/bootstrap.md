@@ -97,7 +97,11 @@ The adapter bounds its clock delay loop and returns an error if the clock stalls
 Each ring poll processes at most one ring.
 
 A request timeout poisons the channel and retains its in-flight buffers.
-Stop sends SMC destroy and waits for a valid response.
+Stop sends SMC destroy only after a validated establish.
+The pin applies the same rule with its `max_num_cqs > 0` guard.
+If the establish failed or never validated, stop sends no destroy request.
+It then clears bus mastering and releases resources as usual.
+After a validated establish, stop waits for a valid destroy response.
 Only then does it disable bus mastering, stop MSI-X, release the IRQ, and free DMA pages.
 A destroy timeout returns an explicit error and quarantines all resources.
 It does not free pages that the device might still access.
@@ -119,6 +123,7 @@ It checks both values in the destination of every SQ WQE.
 Coverage includes 32-bit and 64-bit BARs, MSI-X bounds and overlap, invalid resources, and missing DMA guarantees.
 It injects each DMA allocation failure and each PCI configuration failure.
 It rejects malformed init events, bad owners, wrong queue IDs, bad message IDs, invalid lengths, and firmware errors.
+It sends SMC destroy only after a validated establish and counts zero destroys for establish failures.
 It exercises owner wrap across all three owner bits.
 It checks missing interrupts, missing completions, stopped clocks, and all bounded timeout paths.
 It checks DMA quarantine and cleanup retries after destroy, IRQ release, and unmap errors.

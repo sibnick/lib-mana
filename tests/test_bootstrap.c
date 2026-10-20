@@ -135,21 +135,44 @@ static int allocations(void)
 	return 0;
 }
 
+/* Establish faults that fail before INIT_DONE must not send an SMC destroy.
+ * Faults after a validated establish still get exactly one destroy.
+ */
+static const struct {
+	enum host_bootstrap_fault fault;
+	unsigned int destroy;
+} start_faults[] = {
+	{ HOST_BOOTSTRAP_SMC_STATUS, 0 },
+	{ HOST_BOOTSTRAP_NO_INIT, 0 },
+	{ HOST_BOOTSTRAP_BAD_OWNER, 0 },
+	{ HOST_BOOTSTRAP_DUP_INIT, 0 },
+	{ HOST_BOOTSTRAP_SMALL_REQUEST, 0 },
+	{ HOST_BOOTSTRAP_BAD_DB, 0 },
+	{ HOST_BOOTSTRAP_BAD_CQ, 0 },
+	{ HOST_BOOTSTRAP_MISSING_INIT, 0 },
+	{ HOST_BOOTSTRAP_BAD_LENGTH, 1 },
+	{ HOST_BOOTSTRAP_BAD_MESSAGE_ID, 1 },
+	{ HOST_BOOTSTRAP_BAD_STATUS, 1 },
+	{ HOST_BOOTSTRAP_NO_TX, 1 },
+	{ HOST_BOOTSTRAP_NO_IRQ, 1 },
+	{ HOST_BOOTSTRAP_NO_MANA, 1 },
+	{ HOST_BOOTSTRAP_BAD_VERSION, 1 },
+	{ HOST_BOOTSTRAP_UNKNOWN_EVENT, 1 },
+	{ HOST_BOOTSTRAP_WRONG_QUEUE, 1 },
+	{ HOST_BOOTSTRAP_SHORT_RESPONSE, 1 },
+	{ HOST_BOOTSTRAP_BAD_SMC_TYPE, 0 },
+};
+
 static int protocol_errors(void)
 {
 	struct host_bootstrap f;
-	enum host_bootstrap_fault faults[] = {
-		HOST_BOOTSTRAP_SMC_STATUS, HOST_BOOTSTRAP_NO_INIT, HOST_BOOTSTRAP_BAD_OWNER, HOST_BOOTSTRAP_DUP_INIT, HOST_BOOTSTRAP_SMALL_REQUEST,
-		HOST_BOOTSTRAP_BAD_DB, HOST_BOOTSTRAP_BAD_CQ, HOST_BOOTSTRAP_BAD_LENGTH, HOST_BOOTSTRAP_BAD_MESSAGE_ID, HOST_BOOTSTRAP_BAD_STATUS,
-		HOST_BOOTSTRAP_NO_TX, HOST_BOOTSTRAP_NO_IRQ, HOST_BOOTSTRAP_NO_MANA, HOST_BOOTSTRAP_BAD_VERSION,
-		HOST_BOOTSTRAP_UNKNOWN_EVENT, HOST_BOOTSTRAP_MISSING_INIT, HOST_BOOTSTRAP_WRONG_QUEUE, HOST_BOOTSTRAP_SHORT_RESPONSE, HOST_BOOTSTRAP_BAD_SMC_TYPE,
-	};
 	unsigned int i;
-	for (i = 0; i < sizeof(faults) / sizeof(faults[0]); i++) {
-		host_bootstrap_init(&f, faults[i]);
+	for (i = 0; i < sizeof(start_faults) / sizeof(start_faults[0]); i++) {
+		host_bootstrap_init(&f, start_faults[i].fault);
 		TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) < 0);
 		TEST_CHECK(f.errors && !f.host.live_allocations && !f.maps && !f.irq_live);
-		TEST_CHECK(f.smc_destroy == 1 && !f.b.quarantined && !f.b.ready);
+		TEST_CHECK(f.smc_destroy == start_faults[i].destroy);
+		TEST_CHECK(!f.b.quarantined && !f.b.ready);
 		TEST_CHECK(f.host.now_us <= UINT64_C(60000000));
 		TEST_CHECK(host_mock_cleanup(&f.host) == 0);
 		host_bootstrap_init(&f, HOST_BOOTSTRAP_SMC_BUSY);
@@ -174,6 +197,31 @@ static int protocol_errors(void)
 	TEST_CHECK(f.b.quarantined && f.host.live_allocations == 6 && !f.irq_live);
 	f.unmap_fail = 0;
 	TEST_CHECK(mana_bootstrap_stop(&f.b) == 0);
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	return 0;
+}
+
+static int establish_gate(void)
+{
+	struct host_bootstrap f;
+	/* The PF never confirms the establish. Stop must not send a destroy. */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_NO_INIT);
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == -ETIMEDOUT);
+	TEST_CHECK(f.smc_destroy == 0 && !f.b.initialized);
+	TEST_CHECK(!f.b.dma_exposed);
+	TEST_CHECK(f.errors && !f.host.live_allocations && !f.maps && !f.irq_live);
+	TEST_CHECK(!f.b.quarantined);
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	/* An invalid establish response also skips the destroy. */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_SMC_STATUS);
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == -EPROTO);
+	TEST_CHECK(f.smc_destroy == 0 && !f.b.initialized);
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	/* A validated establish still gets exactly one confirmed destroy. */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == 0);
+	TEST_CHECK(mana_bootstrap_stop(&f.b) == 0);
+	TEST_CHECK(f.smc_destroy == 1 && !f.b.quarantined);
 	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
 	return 0;
 }
@@ -316,6 +364,7 @@ int main(void)
 		{"PCI and DMA resource rejection", invalid_resources},
 		{"Each DMA allocation failure", allocations},
 		{"HWC malformed events, responses, and timeouts", protocol_errors},
+		{"SMC destroy gated by a validated establish", establish_gate},
 		{"DMA quarantine and teardown retry", quarantine},
 		{"Each PCI configuration failure", config_failures},
 		{"Reusable response hook, fallback, length, and faults", response_extension},

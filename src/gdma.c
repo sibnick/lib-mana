@@ -513,7 +513,11 @@ int mana_gdma_destroy(struct mana_bootstrap *b)
 	int err;
 	if (!b->dma_exposed)
 		return 0;
-	if (!b->hwc_destroyed) {
+	/* Send the destroy only after a validated establish, like the pinned
+	 * mana_hwc_destroy_channel() guard on max_num_cqs > 0. A PF that never
+	 * confirmed the HWC gets no destroy request.
+	 */
+	if (b->initialized && !b->hwc_destroyed) {
 		if (!b->destroy_sent) {
 			err = smc_wait(b);
 			if (err)
