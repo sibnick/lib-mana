@@ -80,8 +80,16 @@ static int command(struct mana_data *d, const void *req, size_t in_size,
 		return poison(d, "data command uncertain", err);
 	if (err)
 		return err;
-	if (length != out_size)
-		return poison(d, "data response length", -EPROTO);
+	/*
+	 * The pinned HWC layer bounds the response at 32 through the
+	 * caller buffer and lets each command judge the rest
+	 * (mana_hwc_verify_resp_msg, hw_channel.c:43-54). A short response
+	 * follows the same proven-failure path as a firmware status error
+	 * (mana_create_wq_obj, mana_en.c:1689-1701). Fail the command.
+	 * Do not poison the context.
+	 */
+	if (length < out_size)
+		return report(d, "data response length", -EPROTO);
 	return 0;
 }
 

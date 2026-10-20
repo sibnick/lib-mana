@@ -83,7 +83,8 @@ The caller supplies fresh, zeroed `struct mana_bootstrap` storage.
 The caller must retain that storage until `mana_bootstrap_stop()` succeeds.
 The caller must also retain the platform callbacks and their context.
 `mana_hwc_request()` accepts a 40-byte header with request versions 1 through 5 and response versions 1 through 3.
-It validates the response header, command, device, activity ID, length, and completion queue.
+It validates the response command, version floor, message ID, device echo, activity echo, and length bounds.
+It reads neither the response header type word nor the reserved word, like the pin.
 It returns the actual response length separately.
 Calls are serialized.
 They are not safe from interrupt context.

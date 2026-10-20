@@ -20,8 +20,11 @@ The source files are:
 
 The driver encodes little-endian bytes, not native C structures.
 Request and response versions can differ.
-HWC accepts response versions from 1 through the requested version.
-It still checks command, activity, device, length, completion queue, and status.
+HWC accepts any response version of at least 1, like the pinned source.
+It checks command, activity, device, completion queue, and status.
+The pinned response readers never read the header type word or the reserved word.
+A response below the expected struct size fails that command only.
+It does not poison control. See [Firmware tolerance](firmware-tolerance.md).
 Firmware status `0xffffffff` returns `-EOPNOTSUPP`.
 Other firmware failures return `-EPROTO`.
 
@@ -49,13 +52,16 @@ Retain the bootstrap, platform callbacks, and storage until all ownership ends.
 `mana_control_start()` registers the discovered MANA device.
 It queries protocol 0.1.1 without unsupported driver capability flags.
 It records four capability words, the port count, EQ limit, and adapter frame MTU.
-It rejects bare-metal host mode, invalid resource fields, invalid MAC addresses, and invalid port handles.
+It records the bare-metal host mode byte and continues, like the pin.
+It rejects invalid resource fields and invalid port handles.
+It keeps a zero or multicast MAC as reported and reports it once.
 It queries the selected port and its queue limits.
 It configures TX with the registered device's PD and doorbell, not the HWC bootstrap PD.
+It stores the TX short-form byte as a boolean, like the pin.
 It disables RX and queries link speed and QoS.
-Unsupported link queries remain explicit in `link_query_error`.
-They do not prevent other control operations.
-Other link query failures fail start.
+Every link query failure stays recorded in `link_query_error` and does not block start.
+Only a transport poison fails start on that query.
+See [Firmware tolerance](firmware-tolerance.md) for the per-case evidence.
 
 MAC discovery does not provide a MAC setter.
 The pin has no ordinary VF MAC-setting command.

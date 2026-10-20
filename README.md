@@ -35,6 +35,7 @@ The MVP does not promise network continuity during VF removal.
 | `tests/unikraft/` | Minimal application for the real Unikraft compile and link check |
 | `tests/test_msix.c`, `tests/test_pic.c`, `tests/msix/` | Actual patch checks with IRQ, CPUID, and PIC I/O mocks |
 | `patches/` | Required local xPIC MSI-X patch |
+| `docs/firmware-tolerance.md` | Per-case inventory of strict firmware rejections versus the Linux pin, with decisions and Azure gates |
 | `docs/platform.md` | Platform API findings and implementation constraints |
 | `docs/bootstrap.md`, `tests/test_bootstrap.c` | Bootstrap contract, source pin, and focused protocol tests |
 | `docs/control.md`, `tests/test_control.c` | Control contract, source pin, ownership, and focused tests |

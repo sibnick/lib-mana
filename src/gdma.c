@@ -154,14 +154,25 @@ static int complete_rx(struct mana_bootstrap *b, const unsigned char *data)
 		return -EPROTO;
 	memcpy(b->response, rx, length);
 	header = b->response;
-	if (mana_get32(header) != 0 || mana_get32(header + 4) != b->pending_type ||
+	/*
+	 * The pinned HWC layer checks only the length bounds above and
+	 * routes the reply by the echoed message id (mana_hwc_verify_resp_msg,
+	 * hw_channel.c:43-54; mana_hwc_handle_resp, hw_channel.c:79-92).
+	 * The pinned MANA layer checks the message type, device, and
+	 * activity echoes and accepts any response version of at least one
+	 * (gdma_mana_send_request, mana_en.c:1110-1117; mana_verify_resp_hdr,
+	 * mana_en.c:1126-1140). So a version above the requested value is
+	 * valid here. The pin never reads the response header type or the
+	 * reserved word, so both stay unchecked. This driver runs one
+	 * request at a time, so the echoed message id must stay zero.
+	 * The message size field is checked at the MANA layer in
+	 * control.c, like the pin.
+	 */
+	if (mana_get32(header + 4) != b->pending_type ||
 	    !mana_get16(header + 8) ||
-	    mana_get16(header + 8) > b->pending_response_version ||
 	    header[10] || header[11] ||
-	    mana_get32(header + 12) != length ||
 	    mana_get32(header + 16) != b->pending_device ||
-	    mana_get32(header + 20) != b->pending_activity ||
-	    mana_get32(header + 28) != 0)
+	    mana_get32(header + 20) != b->pending_activity)
 		return -EPROTO;
 	b->response_length = length;
 	b->rx_done = 1;
@@ -313,7 +324,6 @@ int mana_hwc_request(struct mana_bootstrap *b, const void *request,
 	b->pending_type = mana_get32(req + 4);
 	b->pending_activity = mana_get32(req + 36);
 	b->pending_device = mana_get32(req + 32);
-	b->pending_response_version = mana_get16(req + 24);
 	b->response = response;
 	b->response_size = response_size;
 	b->response_length = 0;

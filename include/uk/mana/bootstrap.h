@@ -58,7 +58,6 @@ struct mana_bootstrap {
 	unsigned int destroy_sent, hwc_destroyed;
 	unsigned int pending, rx_done, tx_done;
 	uint32_t pending_type, pending_activity, pending_device;
-	uint16_t pending_response_version;
 	unsigned int control_owned, link_known, link_up;
 	uint32_t link_generation;
 	void *response;

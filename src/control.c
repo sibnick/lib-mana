@@ -73,8 +73,16 @@ static int command(struct mana_control *c, const void *req, size_t in_size,
 		return poison(c, "control request", err);
 	if (err)
 		return err;
-	if (length != out_size)
-		return poison(c, "control response length", -EPROTO);
+	/*
+	 * The pinned HWC layer copies at most the caller buffer
+	 * (mana_hwc_verify_resp_msg, hw_channel.c:43-54). The pinned MANA
+	 * layer fails a response smaller than the expected struct as a
+	 * normal command error and keeps the channel usable
+	 * (mana_verify_resp_hdr, mana_en.c:1126-1140). Fail the command.
+	 * Do not poison control.
+	 */
+	if (length < out_size || mana_get32(resp + 12) < out_size)
+		return report(c, "control response length", -EPROTO);
 	return 0;
 }
 
@@ -201,8 +209,14 @@ int mana_control_start(struct mana_control *c, struct mana_bootstrap *b,
 		c->frame_mtu = 1514;
 		report(c, "legacy adapter MTU: use 1514-byte frame limit", -EOPNOTSUPP);
 	}
-	if (c->frame_mtu < 82 || !c->max_ports || !c->max_eqs ||
-	    (mana_get16(resp + 8) >= 3 && resp[66]))
+	/*
+	 * The pin stores bm_hostmode unsanitized and uses it only to skip
+	 * PF-only vPort commands on a PF (mana_en.c:1323 and 4140; uses at
+	 * mana_en.c:3283 and 3295). A VF probe succeeds with either value.
+	 * Record it and continue.
+	 */
+	c->bm_hostmode = mana_get16(resp + 8) >= 3 ? resp[66] : 0;
+	if (c->frame_mtu < 82 || !c->max_ports || !c->max_eqs)
 		return report(c, "unsupported device configuration", -EPROTO);
 	if (port_index >= c->max_ports)
 		return report(c, "port index", -EINVAL);
@@ -226,9 +240,17 @@ int mana_control_start(struct mana_control *c, struct mana_bootstrap *b,
 	c->vport = mana_get64(resp + 56);
 	for (i = 0; i < sizeof(c->mac); i++)
 		nonzero |= c->mac[i];
-	if (!c->max_sq || !c->max_rq || !nonzero || (c->mac[0] & 1) ||
+	if (!c->max_sq || !c->max_rq ||
 	    c->vport == MANA_CONTROL_INVALID_HANDLE)
 		return report(c, "vPort configuration", -EPROTO);
+	if (!nonzero || (c->mac[0] & 1)) {
+		/*
+		 * The pin copies resp.mac_addr without validation
+		 * (mana_en.c:1375). Keep the reported MAC. Report the
+		 * unusual value once and continue, like the pin.
+		 */
+		report(c, "unusual vPort MAC: kept as reported", -EOPNOTSUPP);
+	}
 	c->mtu = c->frame_mtu - 14 < 1500 ? c->frame_mtu - 14 : 1500;
 	memset(req, 0, sizeof(req));
 	header(c, req, CONFIG_TX, 56, 36, 1, 1);
@@ -240,14 +262,25 @@ int mana_control_start(struct mana_control *c, struct mana_bootstrap *b,
 		return err;
 	c->configured = 1;
 	c->tx_vport_offset = mana_get16(resp + 32);
-	c->short_form_allowed = resp[34];
-	if (c->short_form_allowed > 1)
-		return poison(c, "TX configuration response", -EPROTO);
+	/*
+	 * The pin stores short_form_allowed into a bool without
+	 * sanitizing the byte (mana_en.c:1450; bool field at mana.h:579;
+	 * byte field at mana.h:842). Store 1 for any nonzero byte.
+	 */
+	c->short_form_allowed = resp[34] ? 1 : 0;
 	err = mana_control_set_rx(c, 0);
 	if (err)
 		return err;
+	/*
+	 * The pin queries link settings at run time only, and its caller
+	 * turns any failure into an unknown speed
+	 * (mana_query_link_cfg, mana_en.c:1554-1603; caller behavior at
+	 * mana_en.c:994-995). Tolerate every failure of this query and
+	 * keep the error in link_query_error. A transport failure
+	 * poisons control, so it still fails start.
+	 */
 	err = mana_control_query_link(c);
-	if (err && err != -EOPNOTSUPP)
+	if (err && c->quarantined)
 		return err;
 	c->ready = 1;
 	return 0;

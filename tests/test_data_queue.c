@@ -68,10 +68,16 @@ static int respond(void *ctx, const unsigned char *req, size_t size,
 	uint32_t code = mana_get32(req + 4), pages, i, type;
 	uint32_t in_size = 0, out_size = 0, device = 0x10002;
 	struct registered_region *r;
+	int failed;
 	if (code == 1 || code == 2 || code == 3 ||
 	    (code == 10 && mana_get32(req + 32) == 1))
 		return -ENOTSUP;
 	f->commands++;
+	/* A firmware status and a truncated response both fail a command
+	 * deterministically. The pin releases ownership on both paths.
+	 */
+	failed = code == f->status_command ||
+		 (f->short_response && code == f->mutate_command);
 	if (code == f->timeout_command &&
 	    (code != 25 || !f->timeout_region ||
 	     f->region_count + 1 == f->timeout_region) &&
@@ -89,7 +95,7 @@ static int respond(void *ctx, const unsigned char *req, size_t size,
 			r->handle = 0x12340000 + f->region_count + 1;
 			r->address = mana_get64(req + 64);
 			r->size = pages * 4096;
-			r->live = code != f->status_command;
+			r->live = !failed;
 			if (f->zero_handle)
 				r->handle = 0;
 			if (f->duplicate_handle && f->region_count == 2)
@@ -119,7 +125,7 @@ static int respond(void *ctx, const unsigned char *req, size_t size,
 			else {
 				if (r->consumed)
 					f->consumed_destroys++;
-				if (code != f->status_command)
+				if (!failed)
 					r->live = 0;
 			}
 			mana_put64(expected + 40, mana_get64(req + 40));
@@ -131,7 +137,7 @@ static int respond(void *ctx, const unsigned char *req, size_t size,
 			r = find_region(f, mana_get64(req + 56));
 			if (!r || r->consumed)
 				f->mismatch = 1;
-			else if (code != f->status_command)
+			else if (!failed)
 				r->consumed = 1;
 			mana_put32(expected + 40, 4);
 			mana_put32(expected + 48, 23);
@@ -149,7 +155,7 @@ static int respond(void *ctx, const unsigned char *req, size_t size,
 			mana_put32(expected + 40, 4);
 			mana_put32(expected + 44, 17);
 			mana_put32(expected + 48, 1);
-			if (code != f->status_command) {
+			if (!failed) {
 				f->regions[0].live = 0;
 				f->eq_disables++;
 			}
@@ -158,7 +164,7 @@ static int respond(void *ctx, const unsigned char *req, size_t size,
 			in_size = 44;
 			out_size = 32;
 			mana_put32(expected + 40, 17);
-			if (!f->no_test && code != f->status_command)
+			if (!f->no_test && !failed)
 				eq_event(f, 64, 0);
 			break;
 		}
@@ -199,7 +205,7 @@ static int respond(void *ctx, const unsigned char *req, size_t size,
 				if (!r || r->consumed ||
 				    mana_get32(req + 72 + i * 4) != r->size)
 					f->mismatch = 1;
-				else if (code != f->status_command)
+				else if (!failed)
 					r->consumed = 1;
 			}
 			if (mana_get32(req + 84) != 17 ||
@@ -747,13 +753,31 @@ static int uncertain_create(void)
 		f.mutate_command = codes[i];
 		f.short_response = 1;
 		if (codes[i] == 0x20004) {
+			/* A short MANA create response fails the command
+			 * only. Both regions return for proven cleanup.
+			 */
 			TEST_CHECK(mana_data_queue_create(&f.data, &f.tx, MANA_CONTROL_TX,
 							  4096, 4096) == -EPROTO);
-			TEST_CHECK(discard(&f, 9) == 0);
+			TEST_CHECK(!f.data.quarantined && !f.control.quarantined);
+			TEST_CHECK(!f.tx.wq.quarantined && !f.tx.cq.quarantined);
+			TEST_CHECK(f.tx.wq.registered && f.tx.cq.registered);
+			TEST_CHECK(mana_data_queue_destroy(&f.tx) == 0);
+			TEST_CHECK(f.region_destroys == 2);
+			TEST_CHECK(!f.eq_disables && !f.object_destroys);
 		} else {
+			/* A short GDMA response fails the command only. */
 			TEST_CHECK(mana_data_start(&f.data, &f.control, 4096) == -EPROTO);
-			TEST_CHECK(discard(&f, 7) == 0);
+			TEST_CHECK(!f.data.quarantined && !f.control.quarantined);
+			TEST_CHECK(mana_data_stop(&f.data) == 0);
+			TEST_CHECK(f.region_destroys == (codes[i] == 12 ? 1 : 0));
+			TEST_CHECK(!f.eq_disables && !f.object_destroys);
 		}
+		f.mutate_command = 0;
+		f.short_response = 0;
+		if (codes[i] == 0x20004)
+			TEST_CHECK(stop(&f) == 0);
+		else
+			TEST_CHECK(stop_control(&f) == 0);
 	}
 	for (i = 2; i <= 3; i++) {
 		TEST_CHECK(start(&f) == 0);
@@ -1060,7 +1084,7 @@ int main(void)
 		{ "Every queue allocation failure and invalid DMA", allocation_failures },
 		{ "Largest accepted power-of-two region page list", large_ring_boundary },
 		{ "Proven firmware failures permit safe cleanup retry", firmware_failures },
-		{ "Unknown create results retain regions and DMA", uncertain_create },
+		{ "Timeout create quarantines and short create fails proven", uncertain_create },
 		{ "Unknown destroy results retain regions and DMA", uncertain_cleanup },
 		{ "Invalid identifiers and duplicate handles quarantine", invalid_resources },
 		{ "Malformed owners, events, CQ IDs, and RX fence", bad_events },

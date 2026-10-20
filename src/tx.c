@@ -79,7 +79,7 @@ int mana_tx_start(struct mana_tx *tx, struct mana_data *data,
 	if (!data->ready || !c->ready || !records || !capacity ||
 	    capacity > wq_size / 32 || capacity > cq_size / 64 ||
 	    wq_size > 1048576 || cq_size > 1048576 ||
-	    c->tx_vport_offset > 0xfff || c->short_form_allowed > 1 ||
+	    c->tx_vport_offset > 0xfff ||
 	    c->mtu + ETH_HEADER < ETH_MIN_FRAME) {
 		err = report(tx, "TX configuration", -EINVAL);
 		tx->data = NULL;

@@ -47,7 +47,10 @@ struct mana_control {
 	uint16_t max_ports, frame_mtu, mtu, tx_vport_offset;
 	unsigned char mac[6];
 	unsigned int registered, configured, ready, quarantined, data_owned;
-	unsigned int rx_enabled, short_form_allowed;
+	/* bm_hostmode and short_form_allowed record response bytes as the
+	 * pin stores them. short_form_allowed is normalized to 0 or 1.
+	 */
+	unsigned int rx_enabled, short_form_allowed, bm_hostmode;
 	int link_query_error;
 };
 
