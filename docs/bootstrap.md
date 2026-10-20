@@ -12,6 +12,11 @@ Two pages hold the response and request messages.
 The sequence checks PCI identity, BAR resources, VF registers, and MSI-X resources.
 BAR mappings need page-aligned memory resources of at least 4 KiB.
 It then allocates DMA pages and sends the shared-memory channel (SMC) establish request.
+GDMA device addresses must stay below 2^52.
+The SMC establish packs one page address as a 48-bit low frame field plus one 4-bit high nibble.
+The driver rejects an allocated page at or above 2^52 with `-EPROTO`.
+It rejects before enabling bus mastering and before writing the SMC message.
+An unaligned page address fails the alignment gate first.
 HWC init events provide queue IDs, a doorbell ID, a protection domain, and a GPA memory key.
 The driver validates all required init fields before it posts a receive WQE.
 It sends GDMA generate-test-EQE and requires a test event and interrupt delivery.
@@ -116,7 +121,8 @@ It uses the shared host allocator and the reusable synchronous model in `tests/h
 `docs/host-tests.md` defines the model and request-response hook contracts.
 It checks the SMC address packing and emitted RX/SQ WQE fields.
 Synthetic device addresses differ from CPU pointers.
-The test also uses nonzero high page-frame nibbles.
+The test allocates the six ring pages so the last lands 4 KiB below 2^52.
+It rejects every page position whose device address is exactly 2^52.
 The model sends nonzero PF destination IDs in init fields 10 and 11.
 It checks both values in the destination of every SQ WQE.
 

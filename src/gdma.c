@@ -6,6 +6,12 @@
 #define SMC_POLLS 20000U
 #define HWC_POLLS 60000U
 #define REQUEST_POLLS 30000U
+/* GDMA device addresses stay below 2^52. The SMC establish packs one page
+ * address as a 48-bit low frame field plus one 4-bit high nibble, matching
+ * the pinned mana_smc_setup_hwc(). Reject pages at or above the limit
+ * before bus mastering is enabled and before the SMC message is written.
+ */
+#define MANA_DEVICE_ADDR_LIMIT UINT64_C(0x10000000000000)
 
 static int smc_wait(struct mana_bootstrap *b)
 {
@@ -441,6 +447,7 @@ int mana_gdma_start(struct mana_bootstrap *b)
 		if (!b->pages[i].addr || b->pages[i].size != 4096 ||
 		    ((uintptr_t)b->pages[i].addr & 4095) ||
 		    (b->pages[i].device_addr & 4095) ||
+		    b->pages[i].device_addr >= MANA_DEVICE_ADDR_LIMIT ||
 		    b->pages[i].device_addr > UINT64_MAX - 4095)
 			return -EPROTO;
 		memset(b->pages[i].addr, 0, 4096);

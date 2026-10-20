@@ -55,6 +55,12 @@ struct host_bootstrap {
 	unsigned int rq_bells, cq_bells, eq_bells;
 	unsigned int cfg_calls, cfg_fail_at, map_fail, irq_fail, unmap_fail;
 	unsigned int irq_free_fail, dma_bad_at, dma_calls, wide_bar, clock_fail;
+	/* Report the n-th bootstrap page at dma_high_value instead of the
+	 * allocator address. The tracked slot keeps the reported value so a
+	 * later free still matches.
+	 */
+	unsigned int dma_high_at;
+	uint64_t dma_high_value;
 	uint32_t eq_producer, cq_producer;
 	int mismatch;
 	host_bootstrap_response_fn respond;

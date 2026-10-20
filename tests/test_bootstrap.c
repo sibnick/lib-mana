@@ -10,8 +10,10 @@ static int success(void)
 	size_t length;
 	unsigned int i;
 	host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
-	/* Also exercise high page-frame nibbles in the SMC message. */
-	f.host.next_device_address = UINT64_C(0x1234567890000000);
+	/* Allocate so the last ring page lands 4 KiB below the 2^52 device
+	 * address limit. The model verifies the SMC packing there.
+	 */
+	f.host.next_device_address = UINT64_C(0x10000000000000) - 6 * 4096;
 	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == 0);
 	TEST_CHECK(f.b.ready && f.b.mana_device_id == 0x10002);
 	/* Init fields 10 and 11 reach the context and the SQ WQE destination. */
@@ -162,6 +164,36 @@ static const struct {
 	{ HOST_BOOTSTRAP_SHORT_RESPONSE, 1 },
 	{ HOST_BOOTSTRAP_BAD_SMC_TYPE, 0 },
 };
+
+static int device_address_bound(void)
+{
+	struct host_bootstrap f;
+	unsigned int i;
+	/* A page at exactly 2^52 must fail before any SMC or bus-master use. */
+	for (i = 1; i <= 6; i++) {
+		host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
+		f.dma_high_at = i;
+		f.dma_high_value = UINT64_C(0x10000000000000);
+		TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == -EPROTO);
+		TEST_CHECK(!f.smc_destroy && !f.mismatch && !f.b.dma_exposed);
+		TEST_CHECK(!f.host.live_allocations && !f.maps && !f.irq_live);
+		TEST_CHECK(!f.b.quarantined);
+		TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	}
+	/* The highest legal pages, ending 4 KiB below 2^52, are accepted.
+	 * An unaligned 2^52-1 address is rejected by the alignment gate.
+	 */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
+	f.host.next_device_address = UINT64_C(0x10000000000000) - 6 * 4096;
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == 0);
+	TEST_CHECK(f.b.pages[MANA_HWC_TX].device_addr ==
+		   UINT64_C(0x10000000000000) - 4096);
+	TEST_CHECK(!f.mismatch);
+	TEST_CHECK(mana_bootstrap_stop(&f.b) == 0);
+	TEST_CHECK(f.host.live_allocations == 0 && f.smc_destroy == 1);
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	return 0;
+}
 
 static int protocol_errors(void)
 {
@@ -363,6 +395,7 @@ int main(void)
 		{"PCI and HWC bootstrap, request, owner wrap, cleanup", success},
 		{"PCI and DMA resource rejection", invalid_resources},
 		{"Each DMA allocation failure", allocations},
+		{"Device address 2^52 boundary before SMC packing", device_address_bound},
 		{"HWC malformed events, responses, and timeouts", protocol_errors},
 		{"SMC destroy gated by a validated establish", establish_gate},
 		{"DMA quarantine and teardown retry", quarantine},

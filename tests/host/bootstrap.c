@@ -286,12 +286,22 @@ static int dma_alloc(void *ctx, size_t size, struct mana_dma *m)
 {
 	struct host_bootstrap *f = ctx;
 	struct host_dma d;
+	size_t i;
 	int err = host_mock_alloc(&f->host, size, 4096, &d);
 	f->dma_calls++;
 	if (!err) {
 		*m = (struct mana_dma){d.address, d.device_address, d.size};
 		if (f->dma_calls == f->dma_bad_at)
 			m->device_addr++;
+		if (f->dma_high_at && f->dma_calls == f->dma_high_at) {
+			m->device_addr = f->dma_high_value;
+			for (i = 0; i < HOST_MOCK_DMA_SLOTS; i++)
+				if (f->host.dma[i].address == d.address) {
+					f->host.dma[i].device_address =
+						f->dma_high_value;
+					break;
+				}
+		}
 	}
 	return err;
 }
