@@ -82,15 +82,23 @@ The API does not hide allocation errors behind successful packet delivery.
 ## Completion checks
 
 The shared CQ layer checks owner bits, client type, WQ ID, and RQ direction.
-RX accepts ordinary type 1 and truncated type 4.
-A vendor error, unknown type, or unsupported coalesced type quarantines ownership.
+RX consumes ordinary type 1 and truncated type 4 completions.
+The pinned default case counts an unknown CQE type and drops it without
+retiring a buffer (`mana_process_rx_cqe`, `mana_en.c:2382-2387`).
+The RX layer skips such entries and counts them in `rx.unknown_completions`.
+Coalesced types 2 and 7 stay fatal. The pin parses them into several
+packets (`mana_en.c:2369-2376`, `2389-2430`). Skipping one would lose more
+owned buffers than it frees. The pin never enables coalescing
+(`mana_en.c:3863-3864`).
 RX checks its oldest posted offset and basic-unit count against the shared WQ tail before retirement.
 It never retires a guessed or partial WQE.
 
 The client header occupies bytes 0 through 3.
 Receive flags occupy bytes 4 through 7.
 The ordinary packet length occupies the low 16 bits at byte 8.
-Its reserved length bits and the reserved word at byte 12 must be zero.
+The header reserved and hash bits, the upper length bits, the flags
+reserved bits, and the word at byte 12 are never read. The pin never
+validates them (`mana_process_rx_cqe`, `mana_en.c:2338-2430`).
 RX ignores checksum and hash metadata rather than advertising offloads.
 It drops VLAN-stripped packets because this slice cannot restore their Ethernet header.
 Unused packet-info entries do not determine ownership for an ordinary completion.
@@ -98,7 +106,7 @@ Unused packet-info entries do not determine ownership for an ordinary completion
 RX requires a complete Ethernet header and a length within both frame capacity and allocation bounds.
 A known ordinary or truncated completion proves FIFO buffer completion.
 Thus an invalid frame length causes a drop, not an unsafe delivery.
-Identity, owner, type, and posted-record failures retain all device-owned buffers.
+Identity, owner, coalesced type, and posted-record failures retain all device-owned buffers.
 
 The pin defines `rx_wqe_offset` at byte 56 but does not define its units or validity rules.
 Linux does not use this field in `mana_process_rx_cqe`.
@@ -144,8 +152,8 @@ Other platform implementations must supply the same lifetime or retain a shutdow
 It reuses the host bootstrap response hook and links production RX, queues, control, PCI, and GDMA.
 The tests check golden one-SGE fields, synthetic DMA addresses, packet transfer, and release after full device stop.
 They check FIFO and ring wrap through all owner values, rejected full WQs, and explicit refill retry.
-They cover malformed lengths, identities, owners, headers, reserved fields, and posted records.
-They cover truncated packets, unsupported types, allocation failures, missing fences, malformed fences, and uncertain destroy.
+They cover malformed lengths, identities, owners, headers, coalesced types, and posted records.
+They cover truncated packets, skipped unknown types with counters, allocation failures, missing fences, malformed fences, and uncertain destroy.
 Shutdown also reaches a valid fence behind 10000 ordinary packet completions without exhausting the timed wait.
 Firmware failures retain ownership for retry.
 

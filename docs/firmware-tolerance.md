@@ -174,3 +174,31 @@ fields carry the raw CQE values.
 - Test: "Unknown TX completion type completes the packet" in
   `tests/test_tx.c`.
 
+## 9. RX completion types and fields (rx.c mana_rx_poll)
+
+| Field or type | Old rule | Pin rule | Decision |
+|---|---|---|---|
+| Unknown CQE type | Poison. | Log, count `rx_cqe_unknown_type`, and skip the CQE without retiring a buffer (`mana_en.c:2382-2387`). | TOLERATE |
+| Coalesced types 2 and 7 | Poison. | Parsed: the pin delivers every packet and retires one buffer per packet (`mana_en.c:2369-2376`, `2389-2426`). | KEEP-AND-DOCUMENT |
+| Vendor error bits 8-31 of the client header | Poison (required 0). | Never read (`mana.h:229-233` defines them; the RX path reads only `cqe_type`). | TOLERATE |
+| Reserved flag bits, reserved length bits, hash word | Poison (required 0). | Never checked. The pin reads `pkt_len` bits 0-15 and the hash word for skb hashing (`mana_en.c:2392-2400`, `mana.h:255-271`). | TOLERATE |
+| Client type bits 6-7 | Poison on mismatch. | The shared CQ layer contract. | KEEP (pin-equivalent) |
+| `is_sq` or wrong `wq_id` | Poison. | `WARN_ON_ONCE` plus abort for the direction (`mana_en.c:2459-2464`). | KEEP |
+| Length zero | Retire and drop. | Count `pkt_len0_err` and do not retire (`mana_en.c:2430-2437`). | KEEP (documented one-CQE-one-buffer invariant) |
+| VLAN-present bit | Drop the packet. | Deliver with VLAN acceleration (`mana_en.c:2163-2168`). | KEEP (documented drop, not poison; counted in `dropped`) |
+
+The unknown-type skip matches the pin: the CQE is consumed, nothing retires,
+and polling continues with the next CQE. The skip counter is
+`mana_rx.unknown_completions`.
+
+Keep rationale for coalesced types: the pin does not skip them. It parses
+each packet. Skipping would lose the buffers those packets own. Parsing
+needs a multi-packet completion feature. CQE coalescing is not enabled in
+this driver's RX steering request (byte at the enable offset stays 0, like
+`apc->cqe_coalescing_enable = 0` at `mana_en.c:3863-3864`), so compliant firmware
+must not emit these types. Azure gate: `50b980feba`.
+
+Keep rationale for the zero-length type 1 case: the pin does not retire,
+which breaks its own one-CQE-one-buffer match. The library retires to keep
+its FIFO invariant, documented in `docs/rx.md`.
+
