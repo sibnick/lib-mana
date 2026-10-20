@@ -16,6 +16,10 @@ static int success(void)
 	TEST_CHECK(f.b.ready && f.b.mana_device_id == 0x10002);
 	TEST_CHECK(f.requests == 4 && !f.mismatch && f.b.limits.msix == 32);
 	TEST_CHECK(f.host.live_allocations == 6 && f.irq_live);
+	/* One initial and one re-arming RQ post per completed request.
+	 * One CQ arm per request. One EQ arm for init plus one per request.
+	 */
+	TEST_CHECK(f.rq_bells == 5 && f.cq_bells == 4 && f.eq_bells == 5);
 	mana_put32(req + 4, 2);
 	mana_put32(req + 8, 1);
 	mana_put32(req + 12, 40);
@@ -26,6 +30,7 @@ static int success(void)
 	for (i = 0; i < 2200; i++)
 		TEST_CHECK(mana_hwc_request(&f.b, req, 40, resp, 72, &length) == 0);
 	TEST_CHECK(length == 72 && !f.mismatch);
+	TEST_CHECK(f.rq_bells == 2205 && f.cq_bells == 2204 && f.eq_bells == 2205);
 	TEST_CHECK(mana_bootstrap_stop(&f.b) == 0);
 	TEST_CHECK(!f.b.ready && !f.irq_live && !f.maps);
 	TEST_CHECK(f.host.live_allocations == 0 && f.smc_destroy == 1);
@@ -84,6 +89,25 @@ static int invalid_resources(void)
 		TEST_CHECK(!f.b.ready && !f.b.quarantined);
 		TEST_CHECK(host_mock_cleanup(&f.host) == 0);
 	}
+	/* An already-enabled MSI-X capability must not be taken over. */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
+	f.config[0x43] = 0x80; /* MSI-X Message Control: Enable already set. */
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == -EBUSY);
+	TEST_CHECK(f.errors && !f.b.ready && !f.b.quarantined);
+	TEST_CHECK(!f.host.live_allocations && !f.maps && !f.irq_live);
+	TEST_CHECK(host_bootstrap_config(&f, 4, 2) == 0);
+	TEST_CHECK(host_bootstrap_config(&f, 0x42, 2) == 0x8000);
+	TEST_CHECK(!memcmp(f.table_saved, f.host.bar + 0x400, 16));
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	/* BAR5 cannot be 64-bit: the high half would leave configuration space. */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
+	mana_put32(f.config + 0x24, 4); /* BAR5 reports a 64-bit memory BAR. */
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == -EPROTO);
+	TEST_CHECK(f.errors && !f.b.ready && !f.b.quarantined);
+	TEST_CHECK(!f.host.live_allocations && !f.maps && !f.irq_live);
+	TEST_CHECK(host_bootstrap_config(&f, 4, 2) == 0);
+	TEST_CHECK(host_bootstrap_config(&f, 0x24, 4) == 4);
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
 	return 0;
 }
 

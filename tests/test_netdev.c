@@ -568,6 +568,86 @@ static int uncertain_rx_stop(void)
 	return 0;
 }
 
+/* A fence CQE that rx_one finds outside teardown returns -EPROTO.
+ * Teardown then reuses the validated fence and skips a second FENCE_RX.
+ */
+static int rx_fence_error(void)
+{
+	struct fixture *f = fresh();
+	struct uk_netbuf *out = NULL;
+	unsigned int destroys;
+	TEST_CHECK(register_device(f) == 0 && configure_device(f, 2) == 0);
+	TEST_CHECK(uk_netdev_start(&f->n.dev) == 0);
+	TEST_CHECK(mana_control_set_rx(&f->n.control, 0) == 0);
+	TEST_CHECK(mana_control_fence_rx(&f->n.rx.queue.object) == 0);
+	TEST_CHECK(f->n.rx.queue.object.fence_pending &&
+		   !f->n.rx.queue.object.fenced);
+	TEST_CHECK(uk_netdev_rx_one(&f->n.dev, 0, &out) == -EPROTO);
+	TEST_CHECK(!out);
+	TEST_CHECK(f->n.rx.queue.object.fenced &&
+		   !f->n.rx.queue.object.fence_pending);
+	destroys = f->destroys;
+	TEST_CHECK(mana_netdev_stop(&f->n) == 0);
+	TEST_CHECK(f->destroys == destroys + 2);
+	return finish(f);
+}
+
+/* After a proven stop, the driver data-path callbacks reject with
+ * -ESHUTDOWN and keep every packet reference with the caller.
+ */
+static int stopped_queues(void)
+{
+	struct fixture *f = fresh();
+	struct uk_netbuf *pkt, *out = NULL;
+	unsigned int freed = packet_frees;
+	TEST_CHECK(register_device(f) == 0 && configure_device(f, 2) == 0);
+	TEST_CHECK(uk_netdev_start(&f->n.dev) == 0);
+	TEST_CHECK(mana_netdev_stop(&f->n) == 0);
+	TEST_CHECK(mana_netdev_poll(&f->n) == -ESHUTDOWN);
+	pkt = packet(60);
+	TEST_CHECK(pkt);
+	/* The pinned uknetdev API asserts the RUNNING state.
+	 * The test calls the driver callback directly.
+	 */
+	TEST_CHECK(f->n.dev.tx_one(&f->n.dev, &f->n.txq, pkt) == -ESHUTDOWN);
+	TEST_CHECK(f->n.dev.rx_one(&f->n.dev, &f->n.rxq, &out) == -ESHUTDOWN);
+	TEST_CHECK(!out && !f->n.tx.count &&
+		   uk_refcount_read(&pkt->refcount) == 1);
+	uk_netbuf_free(pkt);
+	TEST_CHECK(packet_frees == freed + 1);
+	return finish(f);
+}
+
+/* A queue count above the reported maximum fails with -EINVAL and
+ * leaves both queue owners unset. The maximum count then configures.
+ */
+static int queue_count_bounds(void)
+{
+	struct fixture *f = fresh();
+	struct uk_netdev_conf conf = { .nb_rx_queues = 1, .nb_tx_queues = 1 };
+	struct uk_netdev_txqueue_conf tx = { .a = &allocator };
+	struct uk_netdev_rxqueue_conf rx = {
+		.a = &allocator, .alloc_rxpkts = rx_allocate,
+		.alloc_rxpkts_argp = f
+	};
+	TEST_CHECK(register_device(f) == 0);
+	TEST_CHECK(uk_netdev_configure(&f->n.dev, &conf) == 0);
+	TEST_CHECK(PTR2ERR(f->n.dev.ops->txq_configure(&f->n.dev, 0,
+			MANA_NETDEV_DESCRIPTORS + 1, &tx)) == -EINVAL);
+	TEST_CHECK(PTR2ERR(f->n.dev.ops->rxq_configure(&f->n.dev, 0,
+			MANA_NETDEV_DESCRIPTORS + 1, &rx)) == -EINVAL);
+	TEST_CHECK(!f->n.txq.owner && !f->n.rxq.owner);
+	TEST_CHECK(uk_netdev_txq_configure(&f->n.dev, 0,
+					   MANA_NETDEV_DESCRIPTORS, &tx) == 0);
+	TEST_CHECK(uk_netdev_rxq_configure(&f->n.dev, 0,
+					   MANA_NETDEV_DESCRIPTORS, &rx) == 0);
+	TEST_CHECK(uk_netdev_start(&f->n.dev) == 0);
+	TEST_CHECK(f->n.rx.count == MANA_NETDEV_DESCRIPTORS &&
+		   f->n.tx.capacity == MANA_NETDEV_DESCRIPTORS);
+	TEST_CHECK(mana_netdev_stop(&f->n) == 0);
+	return finish(f);
+}
+
 int main(void)
 {
 	const struct host_test cases[] = {
@@ -580,7 +660,10 @@ int main(void)
 		{ "proven stop failure retains resources for retry", retry_stop },
 		{ "uncertain TX drain retains cookies and DMA", uncertain_stop },
 		{ "every startup allocation and TX rejection", allocation_failures },
-		{ "missing RX fence blocks lower teardown", uncertain_rx_stop }
+		{ "missing RX fence blocks lower teardown", uncertain_rx_stop },
+		{ "unexpected RX fence completion rejects with EPROTO", rx_fence_error },
+		{ "stopped queues reject data-path calls with ESHUTDOWN", stopped_queues },
+		{ "queue count above maximum leaves owners unset", queue_count_bounds }
 	};
 	int result = host_test_run(cases, sizeof(cases) / sizeof(cases[0]));
 	if (!result && buffer_allocs != packet_frees) {

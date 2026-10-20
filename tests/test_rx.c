@@ -11,6 +11,7 @@ struct fixture {
 	struct mana_data data;
 	struct mana_rx rx;
 	struct mana_rx_slot slots[4];
+	struct mana_rx_slot big_slots[64];
 	uint32_t eq_producer, cq_producer, regions;
 	uint64_t handles[3];
 	uint32_t failure, timeout;
@@ -387,6 +388,19 @@ static int configuration(void)
 	TEST_CHECK(mana_rx_refill(&f.rx) == 0);
 	TEST_CHECK(mana_rx_stop(&f.rx) == 0);
 	TEST_CHECK(end(&f, 0) == 0);
+	/* Accepted capacity boundary: exactly one CQ entry stays free for
+	 * the fence while all 63 slots carry buffers.
+	 */
+	{
+		struct fixture g;
+		TEST_CHECK(init(&g) == 0);
+		TEST_CHECK(mana_rx_start(&g.rx, &g.data, g.big_slots, 63, 8192,
+					 4096) == 0);
+		TEST_CHECK(g.rx.ready && g.rx.count == 63 &&
+			   g.rx.capacity == g.rx.queue.cq.dma.size / 64 - 1);
+		TEST_CHECK(mana_rx_stop(&g.rx) == 0);
+		TEST_CHECK(end(&g, 0) == 0);
+	}
 	return 0;
 }
 
@@ -450,6 +464,77 @@ static int empty_fifo(void)
 	TEST_CHECK(mana_rx_poll(&f.rx, &packet) == -EPROTO);
 	TEST_CHECK(discard(&f) == 0);
 	return 0;
+}
+
+/* NULL and in-use arguments fail with -EINVAL and send nothing. */
+static int argument_bounds(void)
+{
+	struct fixture f;
+	struct mana_rx_packet packet = { 0 };
+	struct mana_rx_packet owned = { .dma = { .addr = (void *)1 } };
+	unsigned int requests;
+	TEST_CHECK(start(&f) == 0);
+	requests = f.model.requests;
+	TEST_CHECK(mana_rx_poll(&f.rx, NULL) == -EINVAL);
+	TEST_CHECK(mana_rx_poll(&f.rx, &owned) == -EINVAL);
+	TEST_CHECK(mana_rx_poll(NULL, &packet) == -EINVAL);
+	TEST_CHECK(mana_rx_refill(NULL) == -EINVAL);
+	TEST_CHECK(mana_rx_stop(NULL) == -EINVAL);
+	TEST_CHECK(mana_rx_start(NULL, &f.data, f.slots, 4, 4096, 4096) == -EINVAL);
+	/* A started RX struct rejects a second start. */
+	TEST_CHECK(mana_rx_start(&f.rx, &f.data, f.slots, 4, 4096, 4096) == -EINVAL);
+	/* Release rejects NULL, empty, and allocator-less packets. */
+	TEST_CHECK(mana_rx_packet_release(NULL) == -EINVAL);
+	TEST_CHECK(mana_rx_packet_release(&packet) == -EINVAL);
+	TEST_CHECK(mana_rx_packet_release(&owned) == -EINVAL);
+	TEST_CHECK(f.model.requests == requests);
+	TEST_CHECK(!f.rx.quarantined && !f.control.quarantined && f.rx.ready);
+	TEST_CHECK(mana_rx_stop(&f.rx) == 0);
+	return end(&f, 0);
+}
+
+/* A completed packet that arrives during shutdown is discarded, counted,
+ * and reported by no error callback.
+ */
+static int shutdown_discard(void)
+{
+	struct fixture f;
+	struct mana_rx_packet packet = { 0 };
+	unsigned int errors;
+	TEST_CHECK(start(&f) == 0);
+	completion(&f, 1, 60);
+	errors = f.model.errors;
+	f.rx.stopping = 1; /* The flag mana_rx_stop sets before draining. */
+	TEST_CHECK(mana_rx_poll(&f.rx, &packet) == MANA_RX_DROPPED);
+	TEST_CHECK(!packet.dma.addr && f.rx.count == 3);
+	TEST_CHECK(f.rx.dropped == 1 && !f.rx.delivered);
+	TEST_CHECK(f.model.errors == errors);
+	TEST_CHECK(mana_rx_refill(&f.rx) == -ESHUTDOWN);
+	f.rx.stopping = 0;
+	TEST_CHECK(mana_rx_stop(&f.rx) == 0);
+	return end(&f, 0);
+}
+
+/* A validated fence CQE returns MANA_RX_FENCE to a direct poll caller,
+ * not only to mana_rx_stop, and consumes no buffer.
+ */
+static int fence_outside_stop(void)
+{
+	struct fixture f;
+	struct mana_rx_packet packet = { 0 };
+	TEST_CHECK(start(&f) == 0);
+	TEST_CHECK(mana_control_set_rx(&f.control, 0) == 0);
+	TEST_CHECK(mana_control_fence_rx(&f.rx.queue.object) == 0);
+	TEST_CHECK(f.rx.queue.object.fence_pending && !f.rx.queue.object.fenced);
+	TEST_CHECK(mana_rx_poll(&f.rx, &packet) == MANA_RX_FENCE);
+	TEST_CHECK(!packet.dma.addr && f.rx.count == 4);
+	TEST_CHECK(!f.rx.dropped && !f.rx.delivered);
+	TEST_CHECK(f.rx.queue.object.fenced && !f.rx.queue.object.fence_pending);
+	/* Steering may resume after a fence the caller observed directly. */
+	TEST_CHECK(mana_control_set_rx(&f.control, 1) == 0);
+	TEST_CHECK(!f.rx.queue.object.fenced);
+	TEST_CHECK(mana_rx_stop(&f.rx) == 0);
+	return end(&f, 0);
 }
 
 /* Keep the shared host model's bounded allocation table unchanged. */
@@ -523,6 +608,9 @@ int main(void)
 		{ "RX create, steering, and invalid DMA start failures", start_errors },
 		{ "Delivered packet release remains safe after RX quarantine", quarantine_delivery },
 		{ "RX rejects completion without an outstanding FIFO buffer", empty_fifo },
+		{ "RX null and in-use arguments reject without commands", argument_bounds },
+		{ "RX shutdown discard grows dropped without an error report", shutdown_discard },
+		{ "RX fence CQE returns FENCE to a poll outside stop", fence_outside_stop },
 		{ "RX shutdown reaches fence behind 10000 completed packets", fence_backlog },
 	};
 	return host_test_run(tests, sizeof(tests) / sizeof(tests[0]));

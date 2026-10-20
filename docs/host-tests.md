@@ -90,7 +90,10 @@ Do not initialize a model with live resources.
 Stop the bootstrap before calling `host_mock_cleanup(&model.host)`.
 Require zero from cleanup after successful driver teardown.
 
-The model preserves synthetic DMA addresses and checks SMC address packing, WQEs, and SQ doorbells.
+The model preserves synthetic DMA addresses and checks SMC address packing, WQEs, and all four
+bootstrap doorbells. For each doorbell it checks the queue id, the tail, and the arm bit against
+the live driver state. It counts RQ, CQ, and EQ doorbells in `rq_bells`, `cq_bells`, and
+`eq_bells`.
 It supplies the four source-grounded bootstrap GDMA responses.
 It records resource counts, protocol mismatches, and platform error reports.
 The public fault controls match the bootstrap regression cases.
@@ -178,7 +181,8 @@ Call `host_device_forget_queue(dev, q)` after the destroy completes.
 | `host_device_cqe_fault(dev, fault)` | Corrupt the next CQE id, client bits, owner, or direction |
 
 The model records `tx_frames`, the last captured TX frame, guard counts,
-dropped work, and unknown doorbells for assertions.
+dropped work, and unknown doorbells for assertions. It also checks bootstrap
+RQ, CQ, and EQ doorbell id, tail, and arm fields against the driver state.
 Ring overrun guards reschedule the work instead of skipping an owner bit.
 The data suites and `tests/test_e2e.c` show the intended use.
 

@@ -22,7 +22,7 @@ struct fixture {
 	uint32_t timeout_region, timeout_destroy;
 	unsigned int short_response, bad_id, zero_handle, duplicate_handle;
 	unsigned int no_test, commands, mismatch, region_destroys;
-	unsigned int object_destroys, eq_disables, cq_bells, wq_bells;
+	unsigned int object_destroys, eq_disables, eq_bells, cq_bells, wq_bells;
 	unsigned int reads, writes, consumed_destroys;
 	void (*write64)(void *, const struct mana_mapping *, uint64_t, uint64_t);
 };
@@ -241,6 +241,7 @@ static void write64(void *ctx, const struct mana_mapping *m,
 	if (host_mock_write(&f->model.host, (size_t)off, 8, value))
 		abort();
 	if (off == 0x1ff8 && id == 17) {
+		f->eq_bells++;
 		if (!(value >> 63) || (uint32_t)(value >> 32) !=
 		    (0x80000000U | (f->data.eq_head %
 				    ((uint32_t)f->data.eq.dma.size / 2))))
@@ -488,6 +489,86 @@ static int work_rings(void)
 	return stop(&f);
 }
 
+/* The RQ long-form WQE accepts at most 15 SGEs inside the 256-byte limit. */
+static int rq_sge_limit(void)
+{
+	struct fixture f;
+	struct mana_data_sge sges[16];
+	struct mana_data_posted posted;
+	struct mana_data_work work = { .sges = sges, .num_sge = 16 };
+	uint32_t i;
+	TEST_CHECK(start(&f) == 0);
+	TEST_CHECK(mana_data_queue_create(&f.data, &f.rx, MANA_CONTROL_RX,
+					  4096, 4096) == 0);
+	for (i = 0; i < 16; i++)
+		sges[i] = (struct mana_data_sge) {
+			.address = UINT64_C(0x1234567800000000) + i * 4096,
+			.memory_key = 0x91, .size = 1500
+		};
+	/* 8 header + 8 OOB + 16 SGEs need 272 bytes of the 256-byte WQE. */
+	TEST_CHECK(mana_data_post(&f.rx, &work, &posted) == -E2BIG);
+	TEST_CHECK(f.rx.head == 0 && !f.wq_bells);
+	work.num_sge = 15;
+	TEST_CHECK(mana_data_post(&f.rx, &work, &posted) == 0);
+	TEST_CHECK(posted.basic_units == 8 && f.rx.head == 8 && f.wq_bells == 1);
+	TEST_CHECK(mana_data_retire(&f.rx, &posted) == 0);
+	TEST_CHECK(mana_data_queue_quiesce(&f.rx) == 0);
+	/* RX destroy needs a validated fence like every RX queue. */
+	TEST_CHECK(mana_control_fence_rx(&f.rx.object) == 0);
+	cqe(&f.rx, 0x43, 22);
+	{
+		struct mana_data_completion completion;
+		TEST_CHECK(mana_data_poll_cq(&f.rx, &completion) == 1);
+		TEST_CHECK(completion.kind == MANA_DATA_RX_FENCE);
+	}
+	eq_event(&f, 3, 11);
+	TEST_CHECK(mana_data_queue_destroy(&f.rx) == 0);
+	return stop(&f);
+}
+
+/* The post precheck counts full WQE units. A long-form 2-unit WQE must
+ * wait for two free units, not one.
+ */
+static int long_form_capacity(void)
+{
+	struct fixture f;
+	struct mana_data_sge sge = { 4096, 0x91, 1500 };
+	unsigned char oob[24] = { 0 };
+	struct mana_data_work long_work = { &sge, 1, 0x2a, oob, 24 };
+	struct mana_data_work short_work = { &sge, 1, 0x2a, oob, 8 };
+	struct mana_data_posted posted, longs[63], spare, wrapped;
+	uint32_t i, bells;
+	TEST_CHECK(start(&f) == 0);
+	TEST_CHECK(mana_data_queue_create(&f.data, &f.tx, MANA_CONTROL_TX,
+					  4096, 4096) == 0);
+	for (i = 0; i < 63; i++) {
+		TEST_CHECK(mana_data_post(&f.tx, &long_work, &posted) == 0);
+		TEST_CHECK(posted.basic_units == 2 && posted.offset == i * 64);
+		longs[i] = posted;
+	}
+	/* Fill 126 units with long-form WQEs, then 1 unit with a short one. */
+	TEST_CHECK(mana_data_post(&f.tx, &short_work, &spare) == 0);
+	TEST_CHECK(spare.basic_units == 1 && f.tx.head == 127);
+	bells = f.wq_bells;
+	/* One free unit cannot hold a 2-unit WQE. */
+	TEST_CHECK(mana_data_post(&f.tx, &long_work, &posted) == -ENOSPC);
+	TEST_CHECK(f.tx.head == 127 && f.tx.tail == 0);
+	TEST_CHECK(f.wq_bells == bells);
+	/* Retiring the oldest 2-unit WQE frees room for one long post. */
+	TEST_CHECK(mana_data_retire(&f.tx, &longs[0]) == 0);
+	TEST_CHECK(mana_data_post(&f.tx, &long_work, &wrapped) == 0);
+	TEST_CHECK(wrapped.offset == 4064 && wrapped.basic_units == 2);
+	TEST_CHECK(f.tx.head == 129 && f.wq_bells == bells + 1);
+	/* Drain FIFO so destroy sees a fully retired ring. */
+	for (i = 1; i < 63; i++)
+		TEST_CHECK(mana_data_retire(&f.tx, &longs[i]) == 0);
+	TEST_CHECK(mana_data_retire(&f.tx, &spare) == 0);
+	TEST_CHECK(mana_data_retire(&f.tx, &wrapped) == 0);
+	TEST_CHECK(f.tx.head == f.tx.tail);
+	TEST_CHECK(mana_data_queue_quiesce(&f.tx) == 0);
+	TEST_CHECK(mana_data_queue_destroy(&f.tx) == 0);
+	return stop(&f);
+}
 static int input_bounds(void)
 {
 	struct fixture f;
@@ -870,6 +951,84 @@ static int unknown_eq_events(void)
 	return stop(&f);
 }
 
+/* One poll drains a mixed EQ batch and rings the EQ doorbell once. */
+static int eq_batch(void)
+{
+	struct fixture f;
+	struct mana_data_completion completion;
+	uint32_t head;
+	unsigned int bells;
+	TEST_CHECK(start(&f) == 0);
+	TEST_CHECK(mana_data_queue_create(&f.data, &f.tx, MANA_CONTROL_TX,
+					  4096, 4096) == 0);
+	TEST_CHECK(mana_data_queue_create(&f.data, &f.rx, MANA_CONTROL_RX,
+					  4096, 4096) == 0);
+	eq_event(&f, 3, 10); /* TX CQ notification. */
+	eq_event(&f, 3, 11); /* RX CQ notification. */
+	eq_event(&f, 64, 0); /* Data EQ self-test. */
+	eq_event(&f, 255, 0); /* Undefined type. */
+	f.data.test_seen = 0;
+	head = f.data.eq_head;
+	bells = f.eq_bells;
+	TEST_CHECK(mana_data_poll(&f.data) == 0);
+	TEST_CHECK(f.tx.notified && f.rx.notified);
+	TEST_CHECK(f.data.test_seen && f.data.unknown_events == 1);
+	TEST_CHECK(f.data.eq_head == head + 4);
+	TEST_CHECK(f.eq_bells == bells + 1); /* One doorbell for the batch. */
+	TEST_CHECK(mana_data_poll(&f.data) == 0);
+	TEST_CHECK(f.eq_bells == bells + 1); /* An empty pass rings nothing. */
+	/* Both notified queues still serve completions. */
+	cqe(&f.tx, 0x60, 21 | (1U << 24));
+	TEST_CHECK(mana_data_poll_cq(&f.tx, &completion) == 1);
+	TEST_CHECK(f.tx.notified && completion.wq_id == 21);
+	TEST_CHECK(mana_data_poll_cq(&f.tx, &completion) == 0);
+	TEST_CHECK(!f.tx.notified);
+	TEST_CHECK(mana_data_queue_quiesce(&f.tx) == 0);
+	TEST_CHECK(mana_data_queue_destroy(&f.tx) == 0);
+	TEST_CHECK(mana_control_fence_rx(&f.rx.object) == 0);
+	cqe(&f.rx, 0x43, 22);
+	TEST_CHECK(mana_data_poll_cq(&f.rx, &completion) == 1);
+	TEST_CHECK(completion.kind == MANA_DATA_RX_FENCE);
+	eq_event(&f, 3, 11);
+	TEST_CHECK(mana_data_queue_quiesce(&f.rx) == 0);
+	TEST_CHECK(mana_data_queue_destroy(&f.rx) == 0);
+	return stop(&f);
+}
+
+/* The CQ head crosses the 32-bit counter boundary. Owner generations,
+ * doorbell tails, and completion service must continue correctly.
+ */
+static int cq_wrap32(void)
+{
+	struct fixture f;
+	struct mana_data_completion completion;
+	unsigned char *ring;
+	unsigned int bells;
+	TEST_CHECK(start(&f) == 0);
+	TEST_CHECK(mana_data_queue_create(&f.data, &f.tx, MANA_CONTROL_TX,
+					  4096, 4096) == 0);
+	/* Simulate 2^32 - 1 units polled. Entry 63 holds owner bits 7. */
+	f.tx.cq_head = UINT32_MAX;
+	cqe(&f.tx, 0x60, 21 | (1U << 24));
+	bells = f.cq_bells;
+	TEST_CHECK(mana_data_poll_cq(&f.tx, &completion) == 1);
+	TEST_CHECK(f.tx.cq_head == 0); /* The 32-bit counter wrapped. */
+	TEST_CHECK(completion.wq_id == 21 && completion.is_sq);
+	/* The next slot carries the last full pass: consumed bits 7. */
+	ring = (unsigned char *)f.tx.cq.dma.addr;
+	mana_put32(ring + 60, 7U << 29);
+	TEST_CHECK(mana_data_poll_cq(&f.tx, &completion) == 0);
+	TEST_CHECK(mana_data_poll(&f.data) == 0);
+	cqe(&f.tx, 0x60, 21 | (1U << 24)); /* Owner generation restarts at 0. */
+	TEST_CHECK(mana_data_poll_cq(&f.tx, &completion) == 1);
+	TEST_CHECK(f.tx.cq_head == 1);
+	/* Both wrapped arms carried tail 0 then tail 1 with the arm bit. */
+	TEST_CHECK(f.cq_bells == bells + 2);
+	TEST_CHECK(mana_data_queue_quiesce(&f.tx) == 0);
+	TEST_CHECK(mana_data_queue_destroy(&f.tx) == 0);
+	return stop(&f);
+}
+
 static int eq_timeout(void)
 {
 	struct fixture f;
@@ -895,6 +1054,8 @@ int main(void)
 		{ "Data EQ/WQ/CQ ownership and validated RX fence", lifecycle },
 		{ "Three-bit EQ/CQ owner wrap and typed completion", owner_wrap },
 		{ "GDMA WQE layout, ring wrap, full queue, and retirement", work_rings },
+		{ "RQ long form rejects sixteen SGEs with E2BIG", rq_sge_limit },
+		{ "Two-unit long-form WQE needs two free units", long_form_capacity },
 		{ "Queue sizes, queried limits, SGE keys, and bounds", input_bounds },
 		{ "Every queue allocation failure and invalid DMA", allocation_failures },
 		{ "Largest accepted power-of-two region page list", large_ring_boundary },
@@ -904,6 +1065,8 @@ int main(void)
 		{ "Invalid identifiers and duplicate handles quarantine", invalid_resources },
 		{ "Malformed owners, events, CQ IDs, and RX fence", bad_events },
 		{ "Undefined EQ event types stay ignored and recoverable", unknown_eq_events },
+		{ "One EQ poll drains a mixed batch with one doorbell", eq_batch },
+		{ "CQ head wraps the 32-bit counter with fresh owners", cq_wrap32 },
 		{ "Bounded EQ test timeout and stalled clock", eq_timeout }
 	};
 	return host_test_run(tests, sizeof(tests) / sizeof(tests[0]));
