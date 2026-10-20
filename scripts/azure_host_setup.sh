@@ -18,7 +18,6 @@ Required environment:
   AZ_HOST_VM    Host VM name.
 
 Optional environment:
-  AZ_CMD_TIMEOUT  run-command timeout in seconds. Default: 900
 
 Exit codes from the host payload:
   10  nested virtualization is not usable (no vmx or svm, or no /dev/kvm)
@@ -169,8 +168,7 @@ PAYLOAD_EOF
 echo "== Running host setup on $AZ_HOST_VM (group $AZ_RG) =="
 az vm run-command invoke \
 	--resource-group "$AZ_RG" --name "$AZ_HOST_VM" \
-	--command-id RunShellScript --scripts "@$payload" \
-	--timeout "${AZ_CMD_TIMEOUT:-900}"
+	--command-id RunShellScript --scripts "@$payload"
 
 cat <<EOF
 

@@ -14,7 +14,6 @@ Required environment:
   AZ_CONFIRM   Must be yes. The run deletes billable resources.
 
 Optional environment:
-  AZ_CMD_TIMEOUT  Azure CLI timeout in seconds. Default: 1800
 EOF
 }
 
@@ -39,8 +38,7 @@ az resource list --resource-group "$AZ_RG" \
 	--query '[].{type:type, name:name}' -o table
 
 echo "== Deleting resource group $AZ_RG =="
-az group delete --name "$AZ_RG" --yes \
-	--timeout "${AZ_CMD_TIMEOUT:-1800}"
+az group delete --name "$AZ_RG" --yes
 
 echo "== Verifying deletion =="
 if az group show --name "$AZ_RG" -o none 2>/dev/null; then

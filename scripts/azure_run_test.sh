@@ -280,13 +280,13 @@ BODY_C_EOF
 run_host() {
 	az vm run-command invoke --resource-group "$AZ_RG" \
 		--name "$AZ_HOST_VM" --command-id RunShellScript \
-		--scripts "@$1" --timeout "${2:-$CMD_TIMEOUT}" 2>&1 || true
+		--scripts "@$1" 2>&1 || true
 }
 
 run_peer() {
 	az vm run-command invoke --resource-group "$AZ_RG" \
 		--name "$AZ_PEER_VM" --command-id RunShellScript \
-		--scripts "@$payload_b" --timeout "${1:-$CMD_TIMEOUT}" 2>&1 || true
+		--scripts "@$payload_b" 2>&1 || true
 }
 
 echo "== Phase 1: upload the kernel and arm the host test driver =="
