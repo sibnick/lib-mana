@@ -125,7 +125,7 @@ az network vnet subnet update --resource-group "$RG" \
 echo "== Storage account $SA for boot diagnostics =="
 az storage account create --resource-group "$RG" --name "$SA" \
 	--location "$AZ_LOC" --sku Standard_LRS \
-	--allow-blob-public-access none -o none
+	--allow-blob-public-access false -o none
 
 echo "== Host VM $HOST_VM ($HOST_SIZE, $HOST_IP) =="
 az vm create --resource-group "$RG" --name "$HOST_VM" \
