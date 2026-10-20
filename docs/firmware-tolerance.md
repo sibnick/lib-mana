@@ -154,3 +154,23 @@ completions by these words. The pin ignores the bits, so a future revision
 may relax this check. This ticket keeps the reviewed data-queue contract and
 records it as an Azure validation item on `50b980feba`.
 
+## 8. TX completion types (tx.c mana_tx_poll)
+
+An unknown completion type now completes the packet with `error = -EIO`
+instead of quarantining the context. The reported `type` and `vendor_error`
+fields carry the raw CQE values.
+
+- Pin: the `default` case of `mana_poll_tx_cq` (`mana_en.c:1938`) logs, counts
+  `tx_cqe_unknown_type`, and still dequeues the packet, unmaps, frees the
+  skb, and advances the tail (`mana_en.c:2002-2011`, completion tail walk
+  `mana_en.c:2013-2030`).
+- Decision: TOLERATE. One CQE still retires exactly one FIFO record and
+  frees exactly its packet, so the retirement order contract holds. The
+  result is an error, so no silent success is reported.
+- Kept poisons: wrong client type, wrong direction, wrong `wq_id`, bad
+  owner, and corrupted local records. The pin treats a wrong client type,
+  direction, or `wq_id` as `WARN_ON_ONCE` plus abort (`mana_en.c:1975-1979, 2014`).
+  These are identity contracts, not firmware variant tolerance.
+- Test: "Unknown TX completion type completes the packet" in
+  `tests/test_tx.c`.
+
