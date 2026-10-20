@@ -33,6 +33,10 @@ The MVP does not promise network continuity during VF removal.
 | `tests/host/`, `tests/test_host.c` | Test runner, fault points, MMIO, allocation, and clock foundation |
 | `docs/host-tests.md` | Host test contracts and device model limits |
 | `tests/unikraft/` | Minimal application for the real Unikraft compile and link check |
+| `samples/networkload/` | Bidirectional network check app for the Azure validation |
+| `scripts/prepare-lib-lwip.sh` | Pinned lib-lwip source preparation for the workload image |
+| `scripts/azure_provision.sh`, `scripts/azure_host_setup.sh`, `scripts/azure_run_test.sh`, `scripts/azure_teardown.sh` | Azure lifecycle scripts for validation ticket `50b980feba` |
+| `docs/azure-validation.md` | Coordinator runbook for the nested QEMU Azure validation |
 | `tests/test_msix.c`, `tests/test_pic.c`, `tests/msix/` | Actual patch checks with IRQ, CPUID, and PIC I/O mocks |
 | `patches/` | Required local xPIC MSI-X patch |
 | `docs/firmware-tolerance.md` | Per-case inventory of strict firmware rejections versus the Linux pin, with decisions and Azure gates |
@@ -93,6 +97,26 @@ The local patch and configuration support single-core guests only.
 The generated tree and image stay under `build/`.
 An existing unstamped core tree causes an error rather than an automatic overwrite.
 To rebuild the image without fetching the core again, run `make unikraft-test`.
+
+## Workload image
+
+```sh
+make workload-image
+```
+
+This command builds `samples/networkload`, a small app that answers
+ICMP echo requests and TCP probes on port 8080. It reuses the pinned
+core tree and the local patch of `make unikraft-test`. It adds the
+lib-lwip `RELEASE-0.21.0` port, pinned by SHA-256 in
+`scripts/prepare-lib-lwip.sh`. The lwIP port also downloads the
+upstream lwIP sources, so the build needs network access and
+`unzip`. Set `UK_SOURCE` or `UK_LWIP_SOURCE` to reuse existing
+prepared trees. The image lands at
+`build/workload/networkload_qemu-x86_64`. The app enables
+`CONFIG_LIBMANA` with `CONFIG_LIBMANA_DIRECT_DMA`, unlike the smoke
+test. See `samples/networkload/README.md` for the supported network
+kernel parameters, and `docs/azure-validation.md` for the Azure
+runbook.
 
 ## Next milestones
 
