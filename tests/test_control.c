@@ -23,7 +23,7 @@ struct fixture {
 	struct mana_control_queue tx, rx;
 	struct mana_control_queue_spec spec;
 	enum mutation mutation;
-	uint32_t status_code, status;
+	uint32_t status_code, status, timeout_code;
 	unsigned int commands, mismatch, registered, deregistered;
 	unsigned int fence_commands, destroy_commands;
 };
@@ -52,6 +52,11 @@ static int respond(void *ctx, const unsigned char *req, size_t size,
 	uint32_t type, i;
 	if (code == 1 || code == 2 || code == 3 || code == 10)
 		return -ENOTSUP;
+	if (f->timeout_code == code) {
+		/* Stop completing this command. The transport must time out. */
+		f->timeout_code = 0;
+		f->model.fault = HOST_BOOTSTRAP_NO_TX;
+	}
 	f->commands++;
 	switch (code) {
 	case 4:
@@ -531,6 +536,96 @@ static int transport_failures(void)
 	return discard_quarantined_model(&f);
 }
 
+/* The device accepts the doorbell but never answers it. The driver must
+ * wait out the transport timeout on every start command and on deregister.
+ */
+static int start_timeouts(void)
+{
+	static const uint32_t codes[] = { 4, 0x20001, 0x20008, 0x20003, 0x20007, 0x2000a };
+	struct fixture f;
+	uint64_t before;
+	unsigned int i;
+	for (i = 0; i < sizeof(codes) / sizeof(codes[0]); i++) {
+		init(&f);
+		f.timeout_code = codes[i];
+		TEST_CHECK(mana_bootstrap_start(&f.model.b, &f.model.platform) == 0);
+		TEST_CHECK(mana_control_start(&f.control, &f.model.b, 0) == -ETIMEDOUT);
+		TEST_CHECK(f.control.registered == (codes[i] != 4));
+		TEST_CHECK(f.control.quarantined && !f.control.ready);
+		TEST_CHECK(f.model.b.error == -ETIMEDOUT && f.model.b.pending);
+		TEST_CHECK(f.model.b.control_owned && f.model.b.ready);
+		/* Successful requests never delay, so the clock shows the
+		 * one timed-out request: 30000 polls of one millisecond.
+		 */
+		TEST_CHECK(f.model.host.now_us == UINT64_C(30000000));
+		TEST_CHECK(discard_quarantined_model(&f) == 0);
+	}
+	init(&f);
+	TEST_CHECK(start(&f) == 0);
+	f.timeout_code = 5;
+	before = f.model.host.now_us;
+	TEST_CHECK(mana_control_stop(&f.control) == -ETIMEDOUT);
+	TEST_CHECK(f.model.host.now_us - before == UINT64_C(30000000));
+	TEST_CHECK(f.control.registered && f.control.quarantined);
+	TEST_CHECK(f.model.b.control_owned);
+	return discard_quarantined_model(&f);
+}
+
+/* A failed link query must not block a later re-query. Success restores
+ * the speeds and clears the recorded error.
+ */
+static int link_requery(void)
+{
+	struct fixture f;
+	unsigned int commands;
+	init(&f);
+	TEST_CHECK(start(&f) == 0);
+	TEST_CHECK(!f.control.link_query_error);
+	TEST_CHECK(f.control.link_speed_mbps == 25000 && f.control.qos_speed_mbps == 50000);
+	commands = f.commands;
+	f.status_code = 0x2000a;
+	f.status = 0x1234;
+	TEST_CHECK(mana_control_query_link(&f.control) == -EPROTO);
+	TEST_CHECK(f.control.link_query_error == -EPROTO);
+	TEST_CHECK(!f.control.link_speed_mbps && !f.control.qos_speed_mbps);
+	f.status_code = 0;
+	f.status = 0;
+	TEST_CHECK(mana_control_query_link(&f.control) == 0);
+	TEST_CHECK(!f.control.link_query_error);
+	TEST_CHECK(f.control.link_speed_mbps == 25000 && f.control.qos_speed_mbps == 50000);
+	/* An unconfigured QoS byte fails the re-query and zeroes the speeds. */
+	f.mutation = UNCONFIGURED_QOS;
+	TEST_CHECK(mana_control_query_link(&f.control) == -EINVAL);
+	TEST_CHECK(f.control.link_query_error == -EINVAL);
+	TEST_CHECK(!f.control.link_speed_mbps && !f.control.qos_speed_mbps);
+	f.mutation = NONE;
+	TEST_CHECK(mana_control_query_link(&f.control) == 0);
+	TEST_CHECK(!f.control.link_query_error && f.control.link_speed_mbps == 25000);
+	TEST_CHECK(f.commands == commands + 4);
+	TEST_CHECK(stop(&f) == 0);
+	/* Start tolerates an unsupported link. A later re-query recovers. */
+	init(&f);
+	f.status_code = 0x2000a;
+	f.status = UINT32_MAX;
+	TEST_CHECK(start(&f) == 0);
+	TEST_CHECK(f.control.link_query_error == -EOPNOTSUPP);
+	f.status_code = 0;
+	f.status = 0;
+	TEST_CHECK(mana_control_query_link(&f.control) == 0);
+	TEST_CHECK(!f.control.link_query_error);
+	TEST_CHECK(f.control.link_speed_mbps == 25000 && f.control.qos_speed_mbps == 50000);
+	TEST_CHECK(stop(&f) == 0);
+	/* A query before port configuration sends no command. */
+	init(&f);
+	f.mutation = LARGE_INDIRECTION;
+	TEST_CHECK(start(&f) == -E2BIG);
+	commands = f.commands;
+	TEST_CHECK(mana_control_query_link(&f.control) == -ENOTCONN);
+	TEST_CHECK(f.commands == commands && !f.control.quarantined);
+	f.mutation = NONE;
+	return stop(&f);
+}
+
 static int fence_bounds(void)
 {
 	struct fixture f;
@@ -616,6 +711,8 @@ int main(void)
 		{ "Firmware failures retain objects and permit bounded retry", firmware_retry },
 		{ "Uncertain create results quarantine DMA regions", uncertain_create },
 		{ "Transport failures retain in-flight and queue ownership", transport_failures },
+		{ "Start command and deregister transport timeouts poison control", start_timeouts },
+		{ "Link re-query recovers and pre-configuration sends nothing", link_requery },
 		{ "RX fence completion and clock bounds", fence_bounds },
 		{ "Async link, timeout, reset, service, and unknown events", async_events },
 		{ "Invalid TX response retains registration", failed_tx_configuration },
