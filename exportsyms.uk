@@ -27,6 +27,7 @@ mana_data_retire
 mana_data_poll_cq
 mana_tx_start
 mana_tx_submit
+mana_tx_free_packets
 mana_tx_poll
 mana_tx_stop
 mana_rx_start

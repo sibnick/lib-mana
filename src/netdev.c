@@ -165,7 +165,7 @@ int mana_netdev_poll(struct mana_netdev *n)
 	if (err)
 		return err;
 	if (!n->running || n->stopping)
-		return report(n, "netdev poll stopped", -ESHUTDOWN);
+		return -ESHUTDOWN;
 	err = mana_control_poll(&n->control);
 	if (err < 0)
 		return err;
@@ -192,7 +192,6 @@ static int tx_one(struct uk_netdev *dev, struct uk_netdev_tx_queue *q,
 		   struct uk_netbuf *pkt)
 {
 	struct mana_netdev *n = context(dev);
-	uint32_t units;
 	int err;
 	if (q != &n->txq || q->owner != n || !linear(pkt))
 		return report(n, "netdev TX linear buffer", -EINVAL);
@@ -206,12 +205,8 @@ static int tx_one(struct uk_netdev *dev, struct uk_netdev_tx_queue *q,
 		return 0;
 	if (err < 0)
 		return err;
-	units = n->tx.oob_size == 8 ? 1U : 2U;
 	return UK_NETDEV_STATUS_SUCCESS |
-		(n->tx.count < n->tx.capacity &&
-		 units <= n->tx.queue.wq.dma.size / 32 -
-			  (n->tx.queue.head - n->tx.queue.tail) ?
-		 UK_NETDEV_STATUS_MORE : 0);
+		(mana_tx_free_packets(&n->tx) ? UK_NETDEV_STATUS_MORE : 0);
 }
 
 static int rx_one(struct uk_netdev *dev, struct uk_netdev_rx_queue *q,

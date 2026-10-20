@@ -49,6 +49,13 @@ int mana_tx_start(struct mana_tx *tx, struct mana_data *data,
  */
 int mana_tx_submit(struct mana_tx *tx, const void *frame, uint32_t length,
 		   void *cookie);
+/* Return how many more complete packets submit can accept right now.
+ * Count only proven capacity: free FIFO records and WQ space for whole
+ * WQEs at the current WQE size. Return 0 before start, after stop, and
+ * in quarantine. Any submit or poll changes the count. Serialize this
+ * call with all other TX calls.
+ */
+uint32_t mana_tx_free_packets(const struct mana_tx *tx);
 /* Return 1 for a result, 0 for empty, or a negative queue error.
  * result.error reports a known packet failure, not a queue poll failure.
  */
