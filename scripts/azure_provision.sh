@@ -95,13 +95,23 @@ az account set --subscription "$AZ_SUB"
 echo "== Resource group $RG in $AZ_LOC =="
 az group create --name "$RG" --location "$AZ_LOC" -o none
 
+res_exists() {
+	az "$@" --output none 2>/dev/null
+}
+
 echo "== Virtual network $VNET and subnet $SUBNET ($SUBNET_CIDR) =="
-az network vnet create --resource-group "$RG" --name "$VNET" \
-	--address-prefixes "$VNET_CIDR" --subnet-name "$SUBNET" \
-	--subnet-prefixes "$SUBNET_CIDR" -o none
+if res_exists network vnet show --resource-group "$RG" --name "$VNET"; then
+	echo "   exists: vnet $VNET"
+else
+	az network vnet create --resource-group "$RG" --name "$VNET" \
+		--address-prefixes "$VNET_CIDR" --subnet-name "$SUBNET" \
+		--subnet-prefixes "$SUBNET_CIDR" -o none
+fi
 
 echo "== Network security group $NSG =="
-az network nsg create --resource-group "$RG" --name "$NSG" -o none
+if ! res_exists network nsg show --resource-group "$RG" --name "$NSG"; then
+	az network nsg create --resource-group "$RG" --name "$NSG" -o none
+fi
 az network nsg rule create --resource-group "$RG" --nsg-name "$NSG" \
 	--name allow-intra-icmp --priority 100 --access Allow \
 	--protocol Icmp --direction Inbound \
@@ -114,36 +124,46 @@ az network nsg rule create --resource-group "$RG" --nsg-name "$NSG" \
 	--destination-port-ranges '*' -o none
 
 echo "== NAT gateway $NAT with Standard public IP $NAT_IP =="
-az network public-ip create --resource-group "$RG" --name "$NAT_IP" \
-	--sku Standard -o none
-az network nat gateway create --resource-group "$RG" --name "$NAT" \
-	--public-ip-addresses "$NAT_IP" --idle-timeout 4 -o none
+if ! res_exists network public-ip show --resource-group "$RG" --name "$NAT_IP"; then
+	az network public-ip create --resource-group "$RG" --name "$NAT_IP" \
+		--sku Standard -o none
+fi
+if ! res_exists network nat gateway show --resource-group "$RG" --name "$NAT"; then
+	az network nat gateway create --resource-group "$RG" --name "$NAT" \
+		--public-ip-addresses "$NAT_IP" --idle-timeout 4 -o none
+fi
 az network vnet subnet update --resource-group "$RG" \
 	--vnet-name "$VNET" --name "$SUBNET" \
 	--network-security-group "$NSG" --nat-gateway "$NAT" -o none
 
 echo "== Storage account $SA for boot diagnostics =="
-az storage account create --resource-group "$RG" --name "$SA" \
-	--location "$AZ_LOC" --sku Standard_LRS \
-	--allow-blob-public-access false -o none
+if ! res_exists storage account show --resource-group "$RG" --name "$SA"; then
+	az storage account create --resource-group "$RG" --name "$SA" \
+		--location "$AZ_LOC" --sku Standard_LRS \
+		--allow-blob-public-access false -o none
+fi
 
 echo "== Host VM $HOST_VM ($HOST_SIZE, $HOST_IP) =="
-az vm create --resource-group "$RG" --name "$HOST_VM" \
-	--location "$AZ_LOC" --size "$HOST_SIZE" --image "$IMAGE" \
-	--vnet-name "$VNET" --subnet "$SUBNET" \
-	--private-ip-address "$HOST_IP" --private-ip-address-version IPv4 \
-	--public-ip-address '' --nsg '' \
-	--admin-username "$ADMIN" --generate-ssh-keys \
-	--storage-sku Standard_LRS --boot-diagnostics-storage "$SA" -o none
+if ! res_exists vm show --resource-group "$RG" --name "$HOST_VM"; then
+	az vm create --resource-group "$RG" --name "$HOST_VM" \
+		--location "$AZ_LOC" --size "$HOST_SIZE" --image "$IMAGE" \
+		--vnet-name "$VNET" --subnet "$SUBNET" \
+		--private-ip-address "$HOST_IP" --private-ip-address-version IPv4 \
+		--public-ip-address '' --nsg '' \
+		--admin-username "$ADMIN" --generate-ssh-keys \
+		--storage-sku Standard_LRS --boot-diagnostics-storage "$SA" -o none
+fi
 
 echo "== Peer VM $PEER_VM ($PEER_SIZE, $PEER_IP) =="
-az vm create --resource-group "$RG" --name "$PEER_VM" \
-	--location "$AZ_LOC" --size "$PEER_SIZE" --image "$IMAGE" \
-	--vnet-name "$VNET" --subnet "$SUBNET" \
-	--private-ip-address "$PEER_IP" --private-ip-address-version IPv4 \
-	--public-ip-address '' --nsg '' \
-	--admin-username "$ADMIN" --generate-ssh-keys \
-	--storage-sku Standard_LRS -o none
+if ! res_exists vm show --resource-group "$RG" --name "$PEER_VM"; then
+	az vm create --resource-group "$RG" --name "$PEER_VM" \
+		--location "$AZ_LOC" --size "$PEER_SIZE" --image "$IMAGE" \
+		--vnet-name "$VNET" --subnet "$SUBNET" \
+		--private-ip-address "$PEER_IP" --private-ip-address-version IPv4 \
+		--public-ip-address '' --nsg '' \
+		--admin-username "$ADMIN" --generate-ssh-keys \
+		--storage-sku Standard_LRS -o none
+fi
 
 host_ip=$(az vm list-ip-addresses --resource-group "$RG" --name "$HOST_VM" \
 	--query '[].virtualMachine.network.privateIpAddresses[0]' -o tsv)
