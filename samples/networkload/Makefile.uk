@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
+$(eval $(call addlib,appnetworkload))
+
+APPNETWORKLOAD_SRCS-y += $(APPNETWORKLOAD_BASE)/main.c
