@@ -148,7 +148,7 @@ if ! res_exists vm show --resource-group "$RG" --name "$HOST_VM"; then
 	az vm create --resource-group "$RG" --name "$HOST_VM" \
 		--location "$AZ_LOC" --size "$HOST_SIZE" --image "$IMAGE" \
 		--vnet-name "$VNET" --subnet "$SUBNET" \
-		--private-ip-address "$HOST_IP" --private-ip-address-version IPv4 \
+		--private-ip-address "$HOST_IP" \
 		--public-ip-address '' --nsg '' \
 		--admin-username "$ADMIN" --generate-ssh-keys \
 		--storage-sku Standard_LRS --boot-diagnostics-storage "$SA" -o none
@@ -159,7 +159,7 @@ if ! res_exists vm show --resource-group "$RG" --name "$PEER_VM"; then
 	az vm create --resource-group "$RG" --name "$PEER_VM" \
 		--location "$AZ_LOC" --size "$PEER_SIZE" --image "$IMAGE" \
 		--vnet-name "$VNET" --subnet "$SUBNET" \
-		--private-ip-address "$PEER_IP" --private-ip-address-version IPv4 \
+		--private-ip-address "$PEER_IP" \
 		--public-ip-address '' --nsg '' \
 		--admin-username "$ADMIN" --generate-ssh-keys \
 		--storage-sku Standard_LRS -o none
