@@ -98,6 +98,22 @@ int mana_tx_start(struct mana_tx *tx, struct mana_data *data,
 	return 0;
 }
 
+uint32_t mana_tx_free_packets(const struct mana_tx *tx)
+{
+	uint32_t units, records, ring, used;
+	if (!tx || !tx->ready || tx->stopped || tx->quarantined ||
+	    !tx->capacity || tx->count > tx->capacity)
+		return 0;
+	units = tx->oob_size == 8 ? 1U : 2U;
+	ring = (uint32_t)tx->queue.wq.dma.size / 32;
+	used = tx->queue.head - tx->queue.tail;
+	if (used >= ring)
+		return 0;
+	records = tx->capacity - tx->count;
+	ring = (ring - used) / units;
+	return ring < records ? ring : records;
+}
+
 int mana_tx_submit(struct mana_tx *tx, const void *frame, uint32_t length,
 		   void *cookie)
 {
@@ -121,9 +137,7 @@ int mana_tx_submit(struct mana_tx *tx, const void *frame, uint32_t length,
 	    tx->first >= tx->capacity ||
 	    tx->queue.head - tx->queue.tail > tx->queue.wq.dma.size / 32)
 		return poison(tx, "TX FIFO accounting", -EOVERFLOW);
-	if (tx->count == tx->capacity ||
-	    (tx->oob_size == 8 ? 1U : 2U) >
-	    tx->queue.wq.dma.size / 32 - (tx->queue.head - tx->queue.tail))
+	if (!mana_tx_free_packets(tx))
 		return report(tx, "TX full", -ENOSPC);
 	record = &tx->records[(tx->first + tx->count) % tx->capacity];
 	if (record->dma.addr)

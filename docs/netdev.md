@@ -58,7 +58,8 @@ The core can still report `RUNNING` after failed stop because the driver has not
 Packet callbacks return an explicit stopped or channel error in that state.
 
 Stop disables RX, quiesces RX, waits for its validated data CQ fence, and destroys RX.
-It uses the existing one-CQ-ring fence service bound.
+It reuses the existing bounded fence wait.
+One service call drains at most one CQ ring.
 Stop then drains TX with the required completion callback and destroys TX.
 Only then does it release the shared data EQ and regions.
 It retains uncertain DMA and accepted TX cookies.
@@ -83,13 +84,16 @@ The netdev becomes the owner of one original netbuf reference only after submit 
 It does not add a reference or release the netbuf during submission.
 This also preserves the pinned core's post-callback statistics access.
 Queue-full status and negative errors leave ownership with the caller.
-The `MORE` flag requires both a free record and enough WQ space for the next complete WQE.
+The `MORE` flag follows `mana_tx_free_packets` from [Transmit datapath](tx.md).
+It needs a free record and enough WQ space for the next complete WQE.
 
 Poll and stop return each proven TX cookie exactly once.
 The completion handler logs packet errors and calls the real `uk_netbuf_free`.
 Existing extra netbuf references remain valid.
 Quarantine retains cookies whose device ownership remains uncertain.
-Call `mana_netdev_poll` during idle periods to release completed TX packets and process control events.
+Call `mana_netdev_poll` while the queues run to release completed TX packets and process control events.
+Polls before the first start, while stopped, or during cleanup return `-ESHUTDOWN`.
+The driver reports no platform error event for these returns.
 Both packet callbacks also service TX.
 
 RX poll transfers a coherent allocation to the integration through `mana_rx_packet`.
@@ -135,6 +139,7 @@ The full Unikraft image compiles and links with real guest headers and no host s
 
 Deterministic cases cover registration errors, the default DMA gate, configuration, default queue capacity, repeated lifecycle, and every startup allocation.
 They also cover TX reference ownership, queue-full rejection, packet errors, RX lengths, allocator errors, refill failure, and release after stop.
+They also compare the `MORE` flag with `mana_tx_free_packets` at both WQE sizes and check that idle polls report no platform error event.
 Proven destroy failures permit retries.
 Missing RX fences and bounded TX drain timeouts retain resources and block lower teardown.
 The existing RX backlog test still checks a fence behind 10000 ordinary completions.

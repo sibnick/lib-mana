@@ -10,7 +10,7 @@ struct fixture {
 	struct mana_netdev n;
 	uint32_t regions, eq_producer, tx_producer, rx_producer;
 	uint32_t fail_code, fail_occurrence;
-	unsigned int auto_tx, no_fence, creates, destroys;
+	unsigned int auto_tx, no_fence, creates, destroys, short_form;
 	void (*write64)(void *, const struct mana_mapping *, uint64_t, uint64_t);
 	unsigned int rx_alloc_fail, rx_capacity;
 };
@@ -137,11 +137,14 @@ static int respond(void *ctx, const unsigned char *req, size_t size,
 		mana_put32(resp + 36, 0x91);
 		break;
 	case 5:
-	case 0x20003:
 	case 0x20007:
 	case 0x2000a:
 	case 27:
 	case 13:
+		break;
+	case 0x20003:
+		if (f->short_form)
+			resp[34] = 1;
 		break;
 	case 0x20001:
 		mana_put16(resp + 64, 1);
@@ -618,6 +621,96 @@ static int stopped_queues(void)
 	return finish(f);
 }
 
+/* The MORE flag follows the mana_tx_free_packets result for both the
+ * 1-unit short WQE and the 2-unit long-form WQE. The queue model fills
+ * the record FIFO, rejects one more packet, then frees space through
+ * completions and refills.
+ */
+static int more_capacity(unsigned int short_form)
+{
+	struct fixture *f = fresh();
+	struct uk_netbuf *pkt;
+	uint32_t units = short_form ? 1U : 2U;
+	unsigned int i, freed = packet_frees;
+	int status;
+	f->short_form = short_form;
+	TEST_CHECK(register_device(f) == 0 &&
+		   configure_device(f, MANA_NETDEV_DESCRIPTORS) == 0);
+	TEST_CHECK(!mana_tx_free_packets(&f->n.tx));
+	TEST_CHECK(uk_netdev_start(&f->n.dev) == 0);
+	TEST_CHECK(f->n.tx.oob_size == (short_form ? 8U : 24U));
+	TEST_CHECK(mana_tx_free_packets(&f->n.tx) == MANA_NETDEV_DESCRIPTORS);
+	for (i = 0; i < MANA_NETDEV_DESCRIPTORS; i++) {
+		pkt = packet(60);
+		TEST_CHECK(pkt);
+		status = uk_netdev_tx_one(&f->n.dev, 0, pkt);
+		TEST_CHECK(status == (UK_NETDEV_STATUS_SUCCESS |
+			   (mana_tx_free_packets(&f->n.tx) ?
+			    UK_NETDEV_STATUS_MORE : 0)));
+		TEST_CHECK(mana_tx_free_packets(&f->n.tx) ==
+			   MANA_NETDEV_DESCRIPTORS - 1 - i);
+		TEST_CHECK(f->n.tx.queue.head - f->n.tx.queue.tail ==
+			   units * (i + 1));
+	}
+	pkt = packet(60);
+	TEST_CHECK(pkt);
+	TEST_CHECK(uk_netdev_tx_one(&f->n.dev, 0, pkt) == 0);
+	TEST_CHECK(!mana_tx_free_packets(&f->n.tx) &&
+		   uk_refcount_read(&pkt->refcount) == 1);
+	for (i = 0; i < 4; i++)
+		tx_completion(f, 32);
+	status = uk_netdev_tx_one(&f->n.dev, 0, pkt);
+	TEST_CHECK(status == (UK_NETDEV_STATUS_SUCCESS | UK_NETDEV_STATUS_MORE));
+	TEST_CHECK(mana_tx_free_packets(&f->n.tx) == 3);
+	for (i = 0; i < 3; i++) {
+		pkt = packet(60);
+		TEST_CHECK(pkt);
+		status = uk_netdev_tx_one(&f->n.dev, 0, pkt);
+		TEST_CHECK(status == (UK_NETDEV_STATUS_SUCCESS |
+			   (i < 2 ? UK_NETDEV_STATUS_MORE : 0)));
+	}
+	TEST_CHECK(!mana_tx_free_packets(&f->n.tx));
+	TEST_CHECK(mana_netdev_stop(&f->n) == 0);
+	TEST_CHECK(packet_frees == freed + 36 && !f->n.tx.count);
+	TEST_CHECK(!mana_tx_free_packets(&f->n.tx));
+	return finish(f);
+}
+
+static int more_short_wqe(void)
+{
+	return more_capacity(1);
+}
+
+static int more_long_wqe(void)
+{
+	return more_capacity(0);
+}
+
+/* Polling while the queues do not run returns -ESHUTDOWN and reports
+ * no platform error event. Another rejected call still reports one.
+ */
+static int quiet_poll(void)
+{
+	struct fixture *f = fresh();
+	struct uk_netdev_conf bad = { .nb_rx_queues = 2, .nb_tx_queues = 1 };
+	unsigned int errors;
+	TEST_CHECK(register_device(f) == 0 && configure_device(f, 2) == 0);
+	TEST_CHECK(mana_netdev_poll(&f->n) == -ESHUTDOWN);
+	TEST_CHECK(!f->model.errors);
+	TEST_CHECK(uk_netdev_start(&f->n.dev) == 0);
+	errors = f->model.errors;
+	TEST_CHECK(mana_netdev_poll(&f->n) == 0);
+	TEST_CHECK(f->n.dev.ops->configure(&f->n.dev, &bad) == -ENOTSUP);
+	TEST_CHECK(f->model.errors == errors + 1);
+	TEST_CHECK(mana_netdev_stop(&f->n) == 0);
+	errors = f->model.errors;
+	TEST_CHECK(mana_netdev_poll(&f->n) == -ESHUTDOWN);
+	TEST_CHECK(mana_netdev_poll(&f->n) == -ESHUTDOWN);
+	TEST_CHECK(f->model.errors == errors);
+	TEST_CHECK(!mana_tx_free_packets(&f->n.tx));
+	return finish(f);
+}
+
 /* A queue count above the reported maximum fails with -EINVAL and
  * leaves both queue owners unset. The maximum count then configures.
  */
@@ -663,7 +756,10 @@ int main(void)
 		{ "missing RX fence blocks lower teardown", uncertain_rx_stop },
 		{ "unexpected RX fence completion rejects with EPROTO", rx_fence_error },
 		{ "stopped queues reject data-path calls with ESHUTDOWN", stopped_queues },
-		{ "queue count above maximum leaves owners unset", queue_count_bounds }
+		{ "queue count above maximum leaves owners unset", queue_count_bounds },
+		{ "MORE follows the TX capacity query with short WQEs", more_short_wqe },
+		{ "MORE follows the TX capacity query with long WQEs", more_long_wqe },
+		{ "poll while stopped returns ESHUTDOWN without error events", quiet_poll }
 	};
 	int result = host_test_run(cases, sizeof(cases) / sizeof(cases[0]));
 	if (!result && buffer_allocs != packet_frees) {

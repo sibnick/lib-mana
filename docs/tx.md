@@ -59,6 +59,11 @@ A rejected DMA contract frees only the unpublished allocation.
 A shared post failure also frees only the unpublished allocation.
 Existing accepted packets remain owned.
 
+`mana_tx_free_packets(tx)` reports how many more complete packets submit can accept.
+It counts only proven capacity: free FIFO records and WQ space for whole WQEs at the current WQE size.
+A pre-start, stopped, or quarantined context has no proven capacity and returns 0.
+Submit applies the same check and returns `-ENOSPC` when the query reports zero.
+
 `mana_tx_poll(tx, result)` returns 1 for one completed packet, 0 for empty, or a negative queue error.
 One result returns its cookie exactly once and releases the corresponding DMA allocation.
 `result.error` reports packet failure separately from the poll return value.
