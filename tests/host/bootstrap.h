@@ -61,6 +61,8 @@ struct host_bootstrap {
 	 */
 	unsigned int dma_high_at;
 	uint64_t dma_high_value;
+	/* 1: MSI-X Message Control writes are silently dropped. */
+	unsigned int msix_control_stuck;
 	uint32_t eq_producer, cq_producer;
 	int mismatch;
 	host_bootstrap_response_fn respond;

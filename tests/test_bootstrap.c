@@ -316,6 +316,36 @@ static int config_failures(void)
 	return 0;
 }
 
+static int msix_readback(void)
+{
+	struct host_bootstrap f;
+	/* A silently dropped MSI-X control write must abort the start. */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
+	f.msix_control_stuck = 1;
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == -EIO);
+	TEST_CHECK(f.errors && !f.b.ready && !f.b.quarantined);
+	TEST_CHECK(!f.host.live_allocations && !f.maps && !f.irq_live);
+	TEST_CHECK(host_bootstrap_config(&f, 0x42, 2) == 0);
+	TEST_CHECK(host_bootstrap_config(&f, 4, 2) == 0);
+	TEST_CHECK(!memcmp(f.table_saved, f.host.bar + 0x400, 16));
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	/* A readback mismatch during stop quarantines. A retry completes. */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == 0);
+	f.msix_control_stuck = 1;
+	TEST_CHECK(mana_bootstrap_stop(&f.b) == -EIO);
+	TEST_CHECK(f.b.quarantined && f.host.live_allocations == 6 && f.irq_live);
+	TEST_CHECK(host_bootstrap_config(&f, 0x42, 2) == 0x8000);
+	f.msix_control_stuck = 0;
+	TEST_CHECK(mana_bootstrap_stop(&f.b) == 0);
+	TEST_CHECK(!f.b.quarantined && !f.host.live_allocations && !f.irq_live);
+	TEST_CHECK(host_bootstrap_config(&f, 0x42, 2) == 0);
+	TEST_CHECK(!memcmp(f.table_saved, f.host.bar + 0x400, 16));
+	TEST_CHECK(f.smc_destroy == 1 && !f.maps);
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	return 0;
+}
+
 struct response_context {
 	unsigned int calls, handled;
 	size_t length;
@@ -400,6 +430,7 @@ int main(void)
 		{"SMC destroy gated by a validated establish", establish_gate},
 		{"DMA quarantine and teardown retry", quarantine},
 		{"Each PCI configuration failure", config_failures},
+		{"Silent MSI-X control write failure aborts and quarantines", msix_readback},
 		{"Reusable response hook, fallback, length, and faults", response_extension},
 	};
 	return host_test_run(tests, sizeof(tests) / sizeof(tests[0]));

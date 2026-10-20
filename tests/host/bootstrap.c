@@ -32,6 +32,11 @@ static int config_write(void *ctx, uint16_t off, unsigned int width, uint32_t v)
 	unsigned int i;
 	if (++f->cfg_calls == f->cfg_fail_at)
 		return -EIO;
+	/* Simulate one silent write failure: the register keeps its old
+	 * value, so the driver readback check must catch it.
+	 */
+	if (f->msix_control_stuck && off == 0x42 && width == 2)
+		return 0;
 	for (i = 0; i < width; i++)
 		f->config[off + i] = (unsigned char)(v >> (i * 8));
 	return 0;

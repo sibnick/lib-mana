@@ -10,6 +10,8 @@ Four pages hold EQ, CQ, RQ, and SQ rings.
 Two pages hold the response and request messages.
 
 The sequence checks PCI identity, BAR resources, VF registers, and MSI-X resources.
+The driver reads back and verifies command register and MSI-X control writes.
+A readback mismatch fails with `-EIO`, like a silent write failure.
 BAR mappings need page-aligned memory resources of at least 4 KiB.
 It then allocates DMA pages and sends the shared-memory channel (SMC) establish request.
 GDMA device addresses must stay below 2^52.
@@ -127,6 +129,7 @@ The model sends nonzero PF destination IDs in init fields 10 and 11.
 It checks both values in the destination of every SQ WQE.
 
 Coverage includes 32-bit and 64-bit BARs, MSI-X bounds and overlap, invalid resources, and missing DMA guarantees.
+It aborts the start and quarantines a failed stop when the model drops MSI-X control writes.
 It injects each DMA allocation failure and each PCI configuration failure.
 It rejects malformed init events, bad owners, wrong queue IDs, bad message IDs, invalid lengths, and firmware errors.
 It sends SMC destroy only after a validated establish and counts zero destroys for establish failures.

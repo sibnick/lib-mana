@@ -30,6 +30,22 @@ int mana_pci_command(struct mana_bootstrap *b, uint16_t command)
 	return ((v ^ command) & 0x407) ? -EIO : 0;
 }
 
+/* Write the MSI-X Message Control and verify the write by readback.
+ * The low 11 bits are the read-only table size. Compare only the
+ * Enable (0x8000) and Function Mask (0x4000) bits. This applies the
+ * same rigor as mana_pci_command to every control write.
+ */
+static int mana_msix_control(struct mana_bootstrap *b, uint16_t control)
+{
+	uint32_t v;
+	int err = cfg_write(b, b->msix_cap + 2, 2, control);
+	if (!err)
+		err = cfg_read(b, b->msix_cap + 2, 2, &v);
+	if (err)
+		return err;
+	return ((v ^ control) & 0xc000) ? -EIO : 0;
+}
+
 static int read_bars(struct mana_bootstrap *b)
 {
 	unsigned int i, j;
@@ -199,8 +215,7 @@ static int setup_msix(struct mana_bootstrap *b)
 		if (!(b->p->read32(b->p->ctx, &b->table, off + i * 16 + 12) & 1))
 			return -EBUSY;
 	}
-	err = cfg_write(b, b->msix_cap + 2, 2,
-			b->msix_saved_control | 0x4000);
+	err = mana_msix_control(b, (uint16_t)(b->msix_saved_control | 0x4000));
 	if (err)
 		return err;
 	err = b->p->irq_alloc(b->p->ctx, irq_event, b, &b->irq);
@@ -215,8 +230,8 @@ static int setup_msix(struct mana_bootstrap *b)
 	b->p->dma_wmb(b->p->ctx);
 	(void)b->p->read32(b->p->ctx, &b->table, off + 8);
 	b->p->write32(b->p->ctx, &b->table, off + 12, 0);
-	return cfg_write(b, b->msix_cap + 2, 2,
-			 (b->msix_saved_control | 0x8000) & ~0x4000U);
+	return mana_msix_control(b, (uint16_t)((b->msix_saved_control | 0x8000) &
+					       ~0x4000U));
 }
 
 int mana_pci_start(struct mana_bootstrap *b)
@@ -282,8 +297,8 @@ int mana_pci_stop(struct mana_bootstrap *b)
 		b->bar_dirty &= ~(1U << i);
 	}
 	if (b->irq_owned) {
-		err = cfg_write(b, b->msix_cap + 2, 2,
-				b->msix_saved_control | 0x4000);
+		err = mana_msix_control(b, (uint16_t)(b->msix_saved_control |
+						      0x4000));
 		if (err)
 			return err;
 		b->p->write32(b->p->ctx, &b->table, b->table_offset + 12, 1);
@@ -297,7 +312,7 @@ int mana_pci_stop(struct mana_bootstrap *b)
 				      b->table_offset + i * 4, b->msix_saved[i]);
 	}
 	if (b->msix_cap && !(b->msix_saved_control & 0x8000)) {
-		err = cfg_write(b, b->msix_cap + 2, 2, b->msix_saved_control);
+		err = mana_msix_control(b, b->msix_saved_control);
 		if (err)
 			return err;
 		b->msix_cap = 0;

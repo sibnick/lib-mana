@@ -100,6 +100,8 @@ The public fault controls match the bootstrap regression cases.
 Set `model.dma_high_at` and `model.dma_high_value` to report the selected
 bootstrap page allocation at a chosen device address. The tracked slot keeps
 the reported value, so a later free still matches.
+Set `model.msix_control_stuck` to drop MSI-X Message Control writes, so the
+driver readback check must catch the silent failure.
 `host_bootstrap_config` reads the byte-backed PCI configuration without consuming adapter fault counters.
 Use byte offsets and widths of 1, 2, or 4 within its 256-byte region.
 MMIO and DMA-free errors abort with no success fallback.
