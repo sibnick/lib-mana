@@ -259,9 +259,22 @@ static void write64(void *ctx, const struct mana_mapping *m, uint64_t off,
 		abort();
 	}
 	if (off == 0x1000) {
-		if ((v & 0xffffff) != 7 || (uint32_t)(v >> 32) != f->b.sq_head * 32)
+		if ((v & 0xffffff) != 7 || (uint32_t)(v >> 32) != f->b.sq_head * 32 ||
+		    v >> 63)
 			f->mismatch = 1;
 		host_bootstrap_request(f);
+	} else if (off == 0x1400 && (uint32_t)v == f->b.rq_id) {
+		f->rq_bells++;
+		if ((uint32_t)(v >> 32) != f->b.rq_head * 32 || v >> 63)
+			f->mismatch = 1;
+	} else if (off == 0x1800 && (uint32_t)v == f->b.cq_id) {
+		f->cq_bells++;
+		if ((uint32_t)(v >> 32) != (f->b.cq_head % 512 | 0x80000000U))
+			f->mismatch = 1;
+	} else if (off == 0x1ff8 && (uint32_t)v == f->b.eq_id) {
+		f->eq_bells++;
+		if ((uint32_t)(v >> 32) != (f->b.eq_head % 2048 | 0x80000000U))
+			f->mismatch = 1;
 	}
 }
 

@@ -383,8 +383,24 @@ static void route_doorbell(struct host_device *dev, uint64_t offset,
 	}
 	if (dev->data && id == dev->data->eq_id)
 		return; /* Data EQ arm. The device ignores it. */
-	if (id == f->b.rq_id || id == f->b.cq_id || id == f->b.eq_id)
-		return; /* Bootstrap posting and arming. */
+	if (id == f->b.rq_id) {
+		if ((uint32_t)(value >> 32) != f->b.rq_head * 32 ||
+		    value >> 63)
+			f->mismatch = 1;
+		return;
+	}
+	if (id == f->b.cq_id) {
+		if ((uint32_t)(value >> 32) !=
+		    (f->b.cq_head % 512 | 0x80000000U))
+			f->mismatch = 1;
+		return;
+	}
+	if (id == f->b.eq_id) {
+		if ((uint32_t)(value >> 32) !=
+		    (f->b.eq_head % 2048 | 0x80000000U))
+			f->mismatch = 1;
+		return;
+	}
 	dev->bad_doorbells++;
 	dev->last_bad_doorbell.offset = offset;
 	dev->last_bad_doorbell.value = value;

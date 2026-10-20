@@ -45,6 +45,8 @@ struct host_bootstrap {
 	void (*handler)(void *);
 	void *arg;
 	unsigned int irq_live, maps, errors, smc_destroy, requests;
+	/* Bootstrap RQ, CQ, and EQ doorbells checked by write64. */
+	unsigned int rq_bells, cq_bells, eq_bells;
 	unsigned int cfg_calls, cfg_fail_at, map_fail, irq_fail, unmap_fail;
 	unsigned int irq_free_fail, dma_bad_at, dma_calls, wide_bar, clock_fail;
 	uint32_t eq_producer, cq_producer;
