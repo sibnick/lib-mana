@@ -38,6 +38,8 @@ struct mana_bootstrap {
 	uint32_t db_size;
 	uint32_t eq_id, cq_id, rq_id, sq_id, db_id;
 	uint32_t pd_id, mkey, max_cqs, max_req, max_resp, depth;
+	/* PF destination IDs from init fields 10 and 11. Sent in every SQ WQE. */
+	uint32_t pf_dest_vrq_id, pf_dest_vrcq_id;
 	uint32_t mana_device_id;
 	struct mana_gdma_limits limits;
 	uint32_t eq_head, cq_head, rq_head, sq_head;

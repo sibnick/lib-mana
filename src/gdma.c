@@ -6,6 +6,12 @@
 #define SMC_POLLS 20000U
 #define HWC_POLLS 60000U
 #define REQUEST_POLLS 30000U
+/* GDMA device addresses stay below 2^52. The SMC establish packs one page
+ * address as a 48-bit low frame field plus one 4-bit high nibble, matching
+ * the pinned mana_smc_setup_hwc(). Reject pages at or above the limit
+ * before bus mastering is enabled and before the SMC message is written.
+ */
+#define MANA_DEVICE_ADDR_LIMIT UINT64_C(0x10000000000000)
 
 static int smc_wait(struct mana_bootstrap *b)
 {
@@ -105,7 +111,9 @@ static int init_event(struct mana_bootstrap *b, uint32_t type, uint32_t data)
 		case 7: b->max_cqs = value; break;
 		case 8: b->pd_id = value; break;
 		case 9: b->mkey = value; break;
-		default: break; /* PF destination IDs are unused for a VF. */
+		/* Like the pinned hw_channel.c:169-181. */
+		case 10: b->pf_dest_vrq_id = value; break;
+		case 11: b->pf_dest_vrcq_id = value; break;
 		}
 	} else {
 		if ((b->init_seen & 0x3ff) != 0x3ff ||
@@ -315,6 +323,11 @@ int mana_hwc_request(struct mana_bootstrap *b, const void *request,
 	off = (b->sq_head * 32) & 4095;
 	memset(sq + off, 0, 64);
 	mana_put32(sq + off + 4, 1 | (6U << 8));
+	/* Destination RQ and CQ IDs follow the pinned mana_hwc_post_tx_wqe():
+	 * tx_oob->vrq_id at WQE+16 and tx_oob->vrcq_id at WQE+20.
+	 */
+	mana_put32(sq + off + 16, b->pf_dest_vrq_id);
+	mana_put32(sq + off + 20, b->pf_dest_vrcq_id);
 	mana_put32(sq + off + 24, b->cq_id);
 	mana_put32(sq + off + 28, b->sq_id);
 	mana_put64(sq + off + 32, b->pages[MANA_HWC_TX].device_addr);
@@ -434,6 +447,7 @@ int mana_gdma_start(struct mana_bootstrap *b)
 		if (!b->pages[i].addr || b->pages[i].size != 4096 ||
 		    ((uintptr_t)b->pages[i].addr & 4095) ||
 		    (b->pages[i].device_addr & 4095) ||
+		    b->pages[i].device_addr >= MANA_DEVICE_ADDR_LIMIT ||
 		    b->pages[i].device_addr > UINT64_MAX - 4095)
 			return -EPROTO;
 		memset(b->pages[i].addr, 0, 4096);
@@ -506,7 +520,11 @@ int mana_gdma_destroy(struct mana_bootstrap *b)
 	int err;
 	if (!b->dma_exposed)
 		return 0;
-	if (!b->hwc_destroyed) {
+	/* Send the destroy only after a validated establish, like the pinned
+	 * mana_hwc_destroy_channel() guard on max_num_cqs > 0. A PF that never
+	 * confirmed the HWC gets no destroy request.
+	 */
+	if (b->initialized && !b->hwc_destroyed) {
 		if (!b->destroy_sent) {
 			err = smc_wait(b);
 			if (err)

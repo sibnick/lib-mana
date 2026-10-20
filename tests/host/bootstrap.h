@@ -5,6 +5,12 @@
 #include "mock.h"
 #include <uk/mana/bootstrap.h>
 
+/* PF destination IDs the model sends in init fields 10 and 11. The model
+ * checks that both values reach the SQ WQE destination fields.
+ */
+#define HOST_BOOTSTRAP_INIT_PF_DEST_RQ_ID 12U
+#define HOST_BOOTSTRAP_INIT_PF_DEST_CQ_ID 13U
+
 enum host_bootstrap_fault {
 	HOST_BOOTSTRAP_NORMAL,
 	HOST_BOOTSTRAP_SMC_BUSY,
@@ -49,6 +55,14 @@ struct host_bootstrap {
 	unsigned int rq_bells, cq_bells, eq_bells;
 	unsigned int cfg_calls, cfg_fail_at, map_fail, irq_fail, unmap_fail;
 	unsigned int irq_free_fail, dma_bad_at, dma_calls, wide_bar, clock_fail;
+	/* Report the n-th bootstrap page at dma_high_value instead of the
+	 * allocator address. The tracked slot keeps the reported value so a
+	 * later free still matches.
+	 */
+	unsigned int dma_high_at;
+	uint64_t dma_high_value;
+	/* 1: MSI-X Message Control writes are silently dropped. */
+	unsigned int msix_control_stuck;
 	uint32_t eq_producer, cq_producer;
 	int mismatch;
 	host_bootstrap_response_fn respond;

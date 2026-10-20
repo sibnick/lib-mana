@@ -32,6 +32,11 @@ static int config_write(void *ctx, uint16_t off, unsigned int width, uint32_t v)
 	unsigned int i;
 	if (++f->cfg_calls == f->cfg_fail_at)
 		return -EIO;
+	/* Simulate one silent write failure: the register keeps its old
+	 * value, so the driver readback check must catch it.
+	 */
+	if (f->msix_control_stuck && off == 0x42 && width == 2)
+		return 0;
 	for (i = 0; i < width; i++)
 		f->config[off + i] = (unsigned char)(v >> (i * 8));
 	return 0;
@@ -99,7 +104,9 @@ static void completion(struct host_bootstrap *f, int sq, uint32_t offset, uint32
 
 static void establish(struct host_bootstrap *f)
 {
-	static const uint32_t init[] = { 5, 6, 7, 1, 4096, 4096, 32, 3, 8, 0, 0 };
+	static const uint32_t init[] = { 5, 6, 7, 1, 4096, 4096, 32, 3, 8,
+			HOST_BOOTSTRAP_INIT_PF_DEST_RQ_ID,
+			HOST_BOOTSTRAP_INIT_PF_DEST_CQ_ID };
 	unsigned int i, j;
 	uint16_t high = f->host.bar[0x118] | (uint16_t)f->host.bar[0x119] << 8;
 	for (i = 0; i < 4; i++) {
@@ -182,6 +189,8 @@ void host_bootstrap_request(struct host_bootstrap *f)
 
 	f->requests++;
 	if (mana_get32(sq + sqoff + 4) != (1 | (6U << 8)) ||
+	    mana_get32(sq + sqoff + 16) != HOST_BOOTSTRAP_INIT_PF_DEST_RQ_ID ||
+	    mana_get32(sq + sqoff + 20) != HOST_BOOTSTRAP_INIT_PF_DEST_CQ_ID ||
 	    mana_get64(sq + sqoff + 32) != f->b.pages[MANA_HWC_TX].device_addr ||
 	    mana_get32(sq + sqoff + 40) != 8 ||
 	    mana_get32(sq + sqoff + 44) != mana_get32(tx + 12) ||
@@ -282,12 +291,22 @@ static int dma_alloc(void *ctx, size_t size, struct mana_dma *m)
 {
 	struct host_bootstrap *f = ctx;
 	struct host_dma d;
+	size_t i;
 	int err = host_mock_alloc(&f->host, size, 4096, &d);
 	f->dma_calls++;
 	if (!err) {
 		*m = (struct mana_dma){d.address, d.device_address, d.size};
 		if (f->dma_calls == f->dma_bad_at)
 			m->device_addr++;
+		if (f->dma_high_at && f->dma_calls == f->dma_high_at) {
+			m->device_addr = f->dma_high_value;
+			for (i = 0; i < HOST_MOCK_DMA_SLOTS; i++)
+				if (f->host.dma[i].address == d.address) {
+					f->host.dma[i].device_address =
+						f->dma_high_value;
+					break;
+				}
+		}
 	}
 	return err;
 }

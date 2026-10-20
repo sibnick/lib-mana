@@ -2,6 +2,7 @@
 #include "host/test.h"
 #include "host/bootstrap.h"
 #include "../src/internal.h"
+#include "../src/pci_ids.h"
 
 static int success(void)
 {
@@ -10,10 +11,15 @@ static int success(void)
 	size_t length;
 	unsigned int i;
 	host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
-	/* Also exercise high page-frame nibbles in the SMC message. */
-	f.host.next_device_address = UINT64_C(0x1234567890000000);
+	/* Allocate so the last ring page lands 4 KiB below the 2^52 device
+	 * address limit. The model verifies the SMC packing there.
+	 */
+	f.host.next_device_address = UINT64_C(0x10000000000000) - 6 * 4096;
 	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == 0);
 	TEST_CHECK(f.b.ready && f.b.mana_device_id == 0x10002);
+	/* Init fields 10 and 11 reach the context and the SQ WQE destination. */
+	TEST_CHECK(f.b.pf_dest_vrq_id == HOST_BOOTSTRAP_INIT_PF_DEST_RQ_ID);
+	TEST_CHECK(f.b.pf_dest_vrcq_id == HOST_BOOTSTRAP_INIT_PF_DEST_CQ_ID);
 	TEST_CHECK(f.requests == 4 && !f.mismatch && f.b.limits.msix == 32);
 	TEST_CHECK(f.host.live_allocations == 6 && f.irq_live);
 	/* One initial and one re-arming RQ post per completed request.
@@ -132,21 +138,74 @@ static int allocations(void)
 	return 0;
 }
 
+/* Establish faults that fail before INIT_DONE must not send an SMC destroy.
+ * Faults after a validated establish still get exactly one destroy.
+ */
+static const struct {
+	enum host_bootstrap_fault fault;
+	unsigned int destroy;
+} start_faults[] = {
+	{ HOST_BOOTSTRAP_SMC_STATUS, 0 },
+	{ HOST_BOOTSTRAP_NO_INIT, 0 },
+	{ HOST_BOOTSTRAP_BAD_OWNER, 0 },
+	{ HOST_BOOTSTRAP_DUP_INIT, 0 },
+	{ HOST_BOOTSTRAP_SMALL_REQUEST, 0 },
+	{ HOST_BOOTSTRAP_BAD_DB, 0 },
+	{ HOST_BOOTSTRAP_BAD_CQ, 0 },
+	{ HOST_BOOTSTRAP_MISSING_INIT, 0 },
+	{ HOST_BOOTSTRAP_BAD_LENGTH, 1 },
+	{ HOST_BOOTSTRAP_BAD_MESSAGE_ID, 1 },
+	{ HOST_BOOTSTRAP_BAD_STATUS, 1 },
+	{ HOST_BOOTSTRAP_NO_TX, 1 },
+	{ HOST_BOOTSTRAP_NO_IRQ, 1 },
+	{ HOST_BOOTSTRAP_NO_MANA, 1 },
+	{ HOST_BOOTSTRAP_BAD_VERSION, 1 },
+	{ HOST_BOOTSTRAP_UNKNOWN_EVENT, 1 },
+	{ HOST_BOOTSTRAP_WRONG_QUEUE, 1 },
+	{ HOST_BOOTSTRAP_SHORT_RESPONSE, 1 },
+	{ HOST_BOOTSTRAP_BAD_SMC_TYPE, 0 },
+};
+
+static int device_address_bound(void)
+{
+	struct host_bootstrap f;
+	unsigned int i;
+	/* A page at exactly 2^52 must fail before any SMC or bus-master use. */
+	for (i = 1; i <= 6; i++) {
+		host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
+		f.dma_high_at = i;
+		f.dma_high_value = UINT64_C(0x10000000000000);
+		TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == -EPROTO);
+		TEST_CHECK(!f.smc_destroy && !f.mismatch && !f.b.dma_exposed);
+		TEST_CHECK(!f.host.live_allocations && !f.maps && !f.irq_live);
+		TEST_CHECK(!f.b.quarantined);
+		TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	}
+	/* The highest legal pages, ending 4 KiB below 2^52, are accepted.
+	 * An unaligned 2^52-1 address is rejected by the alignment gate.
+	 */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
+	f.host.next_device_address = UINT64_C(0x10000000000000) - 6 * 4096;
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == 0);
+	TEST_CHECK(f.b.pages[MANA_HWC_TX].device_addr ==
+		   UINT64_C(0x10000000000000) - 4096);
+	TEST_CHECK(!f.mismatch);
+	TEST_CHECK(mana_bootstrap_stop(&f.b) == 0);
+	TEST_CHECK(f.host.live_allocations == 0 && f.smc_destroy == 1);
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	return 0;
+}
+
 static int protocol_errors(void)
 {
 	struct host_bootstrap f;
-	enum host_bootstrap_fault faults[] = {
-		HOST_BOOTSTRAP_SMC_STATUS, HOST_BOOTSTRAP_NO_INIT, HOST_BOOTSTRAP_BAD_OWNER, HOST_BOOTSTRAP_DUP_INIT, HOST_BOOTSTRAP_SMALL_REQUEST,
-		HOST_BOOTSTRAP_BAD_DB, HOST_BOOTSTRAP_BAD_CQ, HOST_BOOTSTRAP_BAD_LENGTH, HOST_BOOTSTRAP_BAD_MESSAGE_ID, HOST_BOOTSTRAP_BAD_STATUS,
-		HOST_BOOTSTRAP_NO_TX, HOST_BOOTSTRAP_NO_IRQ, HOST_BOOTSTRAP_NO_MANA, HOST_BOOTSTRAP_BAD_VERSION,
-		HOST_BOOTSTRAP_UNKNOWN_EVENT, HOST_BOOTSTRAP_MISSING_INIT, HOST_BOOTSTRAP_WRONG_QUEUE, HOST_BOOTSTRAP_SHORT_RESPONSE, HOST_BOOTSTRAP_BAD_SMC_TYPE,
-	};
 	unsigned int i;
-	for (i = 0; i < sizeof(faults) / sizeof(faults[0]); i++) {
-		host_bootstrap_init(&f, faults[i]);
+	for (i = 0; i < sizeof(start_faults) / sizeof(start_faults[0]); i++) {
+		host_bootstrap_init(&f, start_faults[i].fault);
 		TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) < 0);
 		TEST_CHECK(f.errors && !f.host.live_allocations && !f.maps && !f.irq_live);
-		TEST_CHECK(f.smc_destroy == 1 && !f.b.quarantined && !f.b.ready);
+		TEST_CHECK(f.smc_destroy == start_faults[i].destroy);
+		TEST_CHECK(!f.b.quarantined && !f.b.ready);
 		TEST_CHECK(f.host.now_us <= UINT64_C(60000000));
 		TEST_CHECK(host_mock_cleanup(&f.host) == 0);
 		host_bootstrap_init(&f, HOST_BOOTSTRAP_SMC_BUSY);
@@ -171,6 +230,31 @@ static int protocol_errors(void)
 	TEST_CHECK(f.b.quarantined && f.host.live_allocations == 6 && !f.irq_live);
 	f.unmap_fail = 0;
 	TEST_CHECK(mana_bootstrap_stop(&f.b) == 0);
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	return 0;
+}
+
+static int establish_gate(void)
+{
+	struct host_bootstrap f;
+	/* The PF never confirms the establish. Stop must not send a destroy. */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_NO_INIT);
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == -ETIMEDOUT);
+	TEST_CHECK(f.smc_destroy == 0 && !f.b.initialized);
+	TEST_CHECK(!f.b.dma_exposed);
+	TEST_CHECK(f.errors && !f.host.live_allocations && !f.maps && !f.irq_live);
+	TEST_CHECK(!f.b.quarantined);
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	/* An invalid establish response also skips the destroy. */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_SMC_STATUS);
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == -EPROTO);
+	TEST_CHECK(f.smc_destroy == 0 && !f.b.initialized);
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	/* A validated establish still gets exactly one confirmed destroy. */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == 0);
+	TEST_CHECK(mana_bootstrap_stop(&f.b) == 0);
+	TEST_CHECK(f.smc_destroy == 1 && !f.b.quarantined);
 	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
 	return 0;
 }
@@ -230,6 +314,36 @@ static int config_failures(void)
 		TEST_CHECK(f.smc_destroy == 1 && !f.maps && !f.irq_live);
 		TEST_CHECK(host_mock_cleanup(&f.host) == 0);
 	}
+	return 0;
+}
+
+static int msix_readback(void)
+{
+	struct host_bootstrap f;
+	/* A silently dropped MSI-X control write must abort the start. */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
+	f.msix_control_stuck = 1;
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == -EIO);
+	TEST_CHECK(f.errors && !f.b.ready && !f.b.quarantined);
+	TEST_CHECK(!f.host.live_allocations && !f.maps && !f.irq_live);
+	TEST_CHECK(host_bootstrap_config(&f, 0x42, 2) == 0);
+	TEST_CHECK(host_bootstrap_config(&f, 4, 2) == 0);
+	TEST_CHECK(!memcmp(f.table_saved, f.host.bar + 0x400, 16));
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
+	/* A readback mismatch during stop quarantines. A retry completes. */
+	host_bootstrap_init(&f, HOST_BOOTSTRAP_NORMAL);
+	TEST_CHECK(mana_bootstrap_start(&f.b, &f.platform) == 0);
+	f.msix_control_stuck = 1;
+	TEST_CHECK(mana_bootstrap_stop(&f.b) == -EIO);
+	TEST_CHECK(f.b.quarantined && f.host.live_allocations == 6 && f.irq_live);
+	TEST_CHECK(host_bootstrap_config(&f, 0x42, 2) == 0x8000);
+	f.msix_control_stuck = 0;
+	TEST_CHECK(mana_bootstrap_stop(&f.b) == 0);
+	TEST_CHECK(!f.b.quarantined && !f.host.live_allocations && !f.irq_live);
+	TEST_CHECK(host_bootstrap_config(&f, 0x42, 2) == 0);
+	TEST_CHECK(!memcmp(f.table_saved, f.host.bar + 0x400, 16));
+	TEST_CHECK(f.smc_destroy == 1 && !f.maps);
+	TEST_CHECK(host_mock_cleanup(&f.host) == 0);
 	return 0;
 }
 
@@ -306,15 +420,108 @@ static int response_extension(void)
 	return 0;
 }
 
+/*
+ * Probe matching follows the pinned core: drivers/ukbus/pci/pci_bus.c in
+ * Unikraft e31b2c44effe583eb8910e713fda814b6e049213. pci_find_driver stops
+ * at the first all-ANY entry, so that entry terminates the list.
+ */
+static int probe_id_is_any(const struct pci_device_id *id)
+{
+	return id->class_id == PCI_CLASS_ANY_ID &&
+		id->sub_class_id == PCI_CLASS_ANY_ID &&
+		id->vendor_id == PCI_ANY_ID && id->device_id == PCI_ANY_ID &&
+		id->subsystem_vendor_id == PCI_ANY_ID &&
+		id->subsystem_device_id == PCI_ANY_ID;
+}
+
+static int probe_id_match(const struct pci_device_id *dev,
+			  const struct pci_device_id *drv)
+{
+	if (dev->class_id != PCI_CLASS_ANY_ID &&
+	    drv->class_id != PCI_CLASS_ANY_ID &&
+	    dev->class_id != drv->class_id)
+		return 0;
+	if (dev->sub_class_id != PCI_CLASS_ANY_ID &&
+	    drv->sub_class_id != PCI_CLASS_ANY_ID &&
+	    dev->sub_class_id != drv->sub_class_id)
+		return 0;
+	if (dev->vendor_id != PCI_ANY_ID && drv->vendor_id != PCI_ANY_ID &&
+	    dev->vendor_id != drv->vendor_id)
+		return 0;
+	if (dev->device_id != PCI_ANY_ID && drv->device_id != PCI_ANY_ID &&
+	    dev->device_id != drv->device_id)
+		return 0;
+	if (dev->subsystem_vendor_id != PCI_ANY_ID &&
+	    drv->subsystem_vendor_id != PCI_ANY_ID &&
+	    dev->subsystem_vendor_id != drv->subsystem_vendor_id)
+		return 0;
+	if (dev->subsystem_device_id != PCI_ANY_ID &&
+	    drv->subsystem_device_id != PCI_ANY_ID &&
+	    dev->subsystem_device_id != drv->subsystem_device_id)
+		return 0;
+	return 1;
+}
+
+static int probe_table_matches(const struct pci_device_id *dev)
+{
+	const struct pci_device_id *drv_id;
+
+	for (drv_id = mana_pci_ids; !probe_id_is_any(drv_id); drv_id++)
+		if (probe_id_match(dev, drv_id))
+			return 1;
+	return 0;
+}
+
+static int pci_id_table(void)
+{
+	struct pci_device_id dev;
+	unsigned int i, count = 0;
+
+	/* The table holds exactly the ids include/uk/mana.h declares. */
+	for (i = 0; !probe_id_is_any(&mana_pci_ids[i]); i++)
+		count++;
+	TEST_CHECK(count == 1);
+	TEST_CHECK(mana_pci_ids[0].vendor_id == MANA_PCI_VENDOR_ID);
+	TEST_CHECK(mana_pci_ids[0].device_id == MANA_PCI_VF_DEVICE_ID);
+	/* The MANA VF matches with any class and subsystem values. */
+	dev = (struct pci_device_id){ 0x02000002, 0x00, 0x1414, 0x00ba,
+				      0x1414, 0x00ba };
+	TEST_CHECK(probe_table_matches(&dev));
+	dev = (struct pci_device_id){ 0x00000000, 0x00, 0x1414, 0x00ba,
+				      0x0000, 0x0000 };
+	TEST_CHECK(probe_table_matches(&dev));
+	/* Non-MANA devices never reach mana_add. */
+	dev = (struct pci_device_id){ 0x02000000, 0x00, 0x1414, 0x00b1,
+				      0x1414, 0x00b1 }; /* MANA PF. */
+	TEST_CHECK(!probe_table_matches(&dev));
+	dev = (struct pci_device_id){ 0x02000000, 0x00, 0x1413, 0x00ba,
+				      0x0001, 0x0002 };
+	TEST_CHECK(!probe_table_matches(&dev));
+	dev = (struct pci_device_id){ 0x02000001, 0x00, 0x8086, 0x100e,
+				      0x8086, 0x0001 };
+	TEST_CHECK(!probe_table_matches(&dev));
+	dev = (struct pci_device_id){ 0x01000000, 0x00, 0x1af4, 0x1041,
+				      0x1af4, 0x0001 };
+	TEST_CHECK(!probe_table_matches(&dev));
+	dev = (struct pci_device_id){ 0x06040000, 0x04, 0x10ec, 0x8136,
+				      0x1af4, 0x1105 };
+	TEST_CHECK(!probe_table_matches(&dev));
+	return 0;
+}
+
 int main(void)
 {
 	static const struct host_test tests[] = {
+		{"PCI id table scope against the pinned core match", pci_id_table},
 		{"PCI and HWC bootstrap, request, owner wrap, cleanup", success},
 		{"PCI and DMA resource rejection", invalid_resources},
 		{"Each DMA allocation failure", allocations},
+		{"Device address 2^52 boundary before SMC packing", device_address_bound},
 		{"HWC malformed events, responses, and timeouts", protocol_errors},
+		{"SMC destroy gated by a validated establish", establish_gate},
 		{"DMA quarantine and teardown retry", quarantine},
 		{"Each PCI configuration failure", config_failures},
+		{"Silent MSI-X control write failure aborts and quarantines", msix_readback},
 		{"Reusable response hook, fallback, length, and faults", response_extension},
 	};
 	return host_test_run(tests, sizeof(tests) / sizeof(tests[0]));

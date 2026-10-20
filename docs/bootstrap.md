@@ -3,6 +3,10 @@
 ## Implementation boundary
 
 The driver matches only Microsoft MANA VF `1414:00ba`.
+The claimed-id table in `src/pci_ids.c` lists exactly the ids that `include/uk/mana.h` declares.
+The pinned Unikraft core stops its scan at the trailing all-ANY entry.
+That entry is a required list terminator.
+It does not claim every PCI device.
 This module implements HWC bootstrap.
 The [netdev integration](netdev.md) starts control and registers the network interface after bootstrap succeeds.
 It uses one interrupt vector, one in-flight command, and six contiguous 4 KiB DMA pages.
@@ -10,8 +14,15 @@ Four pages hold EQ, CQ, RQ, and SQ rings.
 Two pages hold the response and request messages.
 
 The sequence checks PCI identity, BAR resources, VF registers, and MSI-X resources.
+The driver reads back and verifies command register and MSI-X control writes.
+A readback mismatch fails with `-EIO`, like a silent write failure.
 BAR mappings need page-aligned memory resources of at least 4 KiB.
 It then allocates DMA pages and sends the shared-memory channel (SMC) establish request.
+GDMA device addresses must stay below 2^52.
+The SMC establish packs one page address as a 48-bit low frame field plus one 4-bit high nibble.
+The driver rejects an allocated page at or above 2^52 with `-EPROTO`.
+It rejects before enabling bus mastering and before writing the SMC message.
+An unaligned page address fails the alignment gate first.
 HWC init events provide queue IDs, a doorbell ID, a protection domain, and a GPA memory key.
 The driver validates all required init fields before it posts a receive WQE.
 It sends GDMA generate-test-EQE and requires a test event and interrupt delivery.
@@ -19,7 +30,10 @@ It verifies protocol version 1, lists GDMA devices, and queries resource limits.
 Only these completed steps set `ready`.
 No GDMA or MANA success is fabricated when a platform or protocol step fails.
 
-The VF destination queue IDs remain zero, as in the Linux VF path.
+The driver stores init fields 10 and 11, the PF destination RQ and CQ IDs.
+Every SQ WQE sends both stored values in its destination fields.
+The Linux pin stores the same fields and uses them when it builds each SQ WQE destination.
+Current PF firmware is expected to report zero for both fields.
 The driver reports OS type `Other` and advertises no unsupported driver capabilities.
 The [shared data queue layer](data-queues.md) registers separate data-queue memory regions after device control starts.
 HWC uses the bootstrap pages and the GPA memory key from its init events.
@@ -94,7 +108,11 @@ The adapter bounds its clock delay loop and returns an error if the clock stalls
 Each ring poll processes at most one ring.
 
 A request timeout poisons the channel and retains its in-flight buffers.
-Stop sends SMC destroy and waits for a valid response.
+Stop sends SMC destroy only after a validated establish.
+The pin applies the same rule with its `max_num_cqs > 0` guard.
+If the establish failed or never validated, stop sends no destroy request.
+It then clears bus mastering and releases resources as usual.
+After a validated establish, stop waits for a valid destroy response.
 Only then does it disable bus mastering, stop MSI-X, release the IRQ, and free DMA pages.
 A destroy timeout returns an explicit error and quarantines all resources.
 It does not free pages that the device might still access.
@@ -109,11 +127,17 @@ It uses the shared host allocator and the reusable synchronous model in `tests/h
 `docs/host-tests.md` defines the model and request-response hook contracts.
 It checks the SMC address packing and emitted RX/SQ WQE fields.
 Synthetic device addresses differ from CPU pointers.
-The test also uses nonzero high page-frame nibbles.
+The test allocates the six ring pages so the last lands 4 KiB below 2^52.
+It rejects every page position whose device address is exactly 2^52.
+The model sends nonzero PF destination IDs in init fields 10 and 11.
+It checks both values in the destination of every SQ WQE.
 
 Coverage includes 32-bit and 64-bit BARs, MSI-X bounds and overlap, invalid resources, and missing DMA guarantees.
+It applies the pinned core match rule to the id table: the VF id matches and non-MANA ids do not.
+It aborts the start and quarantines a failed stop when the model drops MSI-X control writes.
 It injects each DMA allocation failure and each PCI configuration failure.
 It rejects malformed init events, bad owners, wrong queue IDs, bad message IDs, invalid lengths, and firmware errors.
+It sends SMC destroy only after a validated establish and counts zero destroys for establish failures.
 It exercises owner wrap across all three owner bits.
 It checks missing interrupts, missing completions, stopped clocks, and all bounded timeout paths.
 It checks DMA quarantine and cleanup retries after destroy, IRQ release, and unmap errors.
