@@ -202,7 +202,8 @@ a fresh subscription in October 2026:
 |---|---|---|
 | Region closed to new customers | VNet create fails with `RequestDisallowedByAzure` | Provision in an eligible region, for example westus2. Quota is per region. |
 | Microsoft.Storage not registered | Storage account create fails with `SubscriptionNotFound` | `az provider register --namespace Microsoft.Storage`, wait for `Registered`, rerun. The script is rerunnable. |
-| B-series not available | Peer VM create fails with `NotAvailableForSubscription` | Set `AZ_PEER_SIZE=Standard_D2as_v4` or another unrestricted 2-core size. Check with `az vm list-skus --query "[0].restrictions"`. |
+| B-series not available | Peer VM create fails with `NotAvailableForSubscription` | Set `AZ_PEER_SIZE` to an unrestricted size. |
+| SKU capacity restricted | vmCreate fails with `SkuNotAvailable`, and az CLI can hide it behind a Python traceback | Read the raw error: `az rest --method put` on the VM URL prints the JSON. Set `AZ_PEER_SIZE=Standard_D2ds_v5` (same size as the host) when B-series and A-series fail. |
 | Regional core quota is small | VM create fails on quota | The default test bed needs 4 cores: host 2, peer 2. Check `az vm list-usage`. |
 
 ## Known risks
