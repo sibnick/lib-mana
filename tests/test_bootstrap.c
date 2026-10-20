@@ -2,6 +2,7 @@
 #include "host/test.h"
 #include "host/bootstrap.h"
 #include "../src/internal.h"
+#include "../src/pci_ids.h"
 
 static int success(void)
 {
@@ -419,9 +420,99 @@ static int response_extension(void)
 	return 0;
 }
 
+/*
+ * Probe matching follows the pinned core: drivers/ukbus/pci/pci_bus.c in
+ * Unikraft e31b2c44effe583eb8910e713fda814b6e049213. pci_find_driver stops
+ * at the first all-ANY entry, so that entry terminates the list.
+ */
+static int probe_id_is_any(const struct pci_device_id *id)
+{
+	return id->class_id == PCI_CLASS_ANY_ID &&
+		id->sub_class_id == PCI_CLASS_ANY_ID &&
+		id->vendor_id == PCI_ANY_ID && id->device_id == PCI_ANY_ID &&
+		id->subsystem_vendor_id == PCI_ANY_ID &&
+		id->subsystem_device_id == PCI_ANY_ID;
+}
+
+static int probe_id_match(const struct pci_device_id *dev,
+			  const struct pci_device_id *drv)
+{
+	if (dev->class_id != PCI_CLASS_ANY_ID &&
+	    drv->class_id != PCI_CLASS_ANY_ID &&
+	    dev->class_id != drv->class_id)
+		return 0;
+	if (dev->sub_class_id != PCI_CLASS_ANY_ID &&
+	    drv->sub_class_id != PCI_CLASS_ANY_ID &&
+	    dev->sub_class_id != drv->sub_class_id)
+		return 0;
+	if (dev->vendor_id != PCI_ANY_ID && drv->vendor_id != PCI_ANY_ID &&
+	    dev->vendor_id != drv->vendor_id)
+		return 0;
+	if (dev->device_id != PCI_ANY_ID && drv->device_id != PCI_ANY_ID &&
+	    dev->device_id != drv->device_id)
+		return 0;
+	if (dev->subsystem_vendor_id != PCI_ANY_ID &&
+	    drv->subsystem_vendor_id != PCI_ANY_ID &&
+	    dev->subsystem_vendor_id != drv->subsystem_vendor_id)
+		return 0;
+	if (dev->subsystem_device_id != PCI_ANY_ID &&
+	    drv->subsystem_device_id != PCI_ANY_ID &&
+	    dev->subsystem_device_id != drv->subsystem_device_id)
+		return 0;
+	return 1;
+}
+
+static int probe_table_matches(const struct pci_device_id *dev)
+{
+	const struct pci_device_id *drv_id;
+
+	for (drv_id = mana_pci_ids; !probe_id_is_any(drv_id); drv_id++)
+		if (probe_id_match(dev, drv_id))
+			return 1;
+	return 0;
+}
+
+static int pci_id_table(void)
+{
+	struct pci_device_id dev;
+	unsigned int i, count = 0;
+
+	/* The table holds exactly the ids include/uk/mana.h declares. */
+	for (i = 0; !probe_id_is_any(&mana_pci_ids[i]); i++)
+		count++;
+	TEST_CHECK(count == 1);
+	TEST_CHECK(mana_pci_ids[0].vendor_id == MANA_PCI_VENDOR_ID);
+	TEST_CHECK(mana_pci_ids[0].device_id == MANA_PCI_VF_DEVICE_ID);
+	/* The MANA VF matches with any class and subsystem values. */
+	dev = (struct pci_device_id){ 0x02000002, 0x00, 0x1414, 0x00ba,
+				      0x1414, 0x00ba };
+	TEST_CHECK(probe_table_matches(&dev));
+	dev = (struct pci_device_id){ 0x00000000, 0x00, 0x1414, 0x00ba,
+				      0x0000, 0x0000 };
+	TEST_CHECK(probe_table_matches(&dev));
+	/* Non-MANA devices never reach mana_add. */
+	dev = (struct pci_device_id){ 0x02000000, 0x00, 0x1414, 0x00b1,
+				      0x1414, 0x00b1 }; /* MANA PF. */
+	TEST_CHECK(!probe_table_matches(&dev));
+	dev = (struct pci_device_id){ 0x02000000, 0x00, 0x1413, 0x00ba,
+				      0x0001, 0x0002 };
+	TEST_CHECK(!probe_table_matches(&dev));
+	dev = (struct pci_device_id){ 0x02000001, 0x00, 0x8086, 0x100e,
+				      0x8086, 0x0001 };
+	TEST_CHECK(!probe_table_matches(&dev));
+	dev = (struct pci_device_id){ 0x01000000, 0x00, 0x1af4, 0x1041,
+				      0x1af4, 0x0001 };
+	TEST_CHECK(!probe_table_matches(&dev));
+	dev = (struct pci_device_id){ 0x06040000, 0x04, 0x10ec, 0x8136,
+				      0x1af4, 0x1105 };
+	TEST_CHECK(!probe_table_matches(&dev));
+	return 0;
+}
+
 int main(void)
 {
 	static const struct host_test tests[] = {
+		{"PCI id table scope against the pinned core match", pci_id_table},
 		{"PCI and HWC bootstrap, request, owner wrap, cleanup", success},
 		{"PCI and DMA resource rejection", invalid_resources},
 		{"Each DMA allocation failure", allocations},

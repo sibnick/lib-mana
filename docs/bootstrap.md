@@ -3,6 +3,10 @@
 ## Implementation boundary
 
 The driver matches only Microsoft MANA VF `1414:00ba`.
+The claimed-id table in `src/pci_ids.c` lists exactly the ids that `include/uk/mana.h` declares.
+The pinned Unikraft core stops its scan at the trailing all-ANY entry.
+That entry is a required list terminator.
+It does not claim every PCI device.
 This module implements HWC bootstrap.
 The [netdev integration](netdev.md) starts control and registers the network interface after bootstrap succeeds.
 It uses one interrupt vector, one in-flight command, and six contiguous 4 KiB DMA pages.
@@ -129,6 +133,7 @@ The model sends nonzero PF destination IDs in init fields 10 and 11.
 It checks both values in the destination of every SQ WQE.
 
 Coverage includes 32-bit and 64-bit BARs, MSI-X bounds and overlap, invalid resources, and missing DMA guarantees.
+It applies the pinned core match rule to the id table: the VF id matches and non-MANA ids do not.
 It aborts the start and quarantines a failed stop when the model drops MSI-X control writes.
 It injects each DMA allocation failure and each PCI configuration failure.
 It rejects malformed init events, bad owners, wrong queue IDs, bad message IDs, invalid lengths, and firmware errors.

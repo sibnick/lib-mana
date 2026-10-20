@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 #include "internal.h"
+#include "pci_ids.h"
 #include <uk/mana/netdev.h>
 
 #include <uk/alloc.h>
@@ -362,13 +363,8 @@ static int mana_add(struct pci_device *device)
 	return 0;
 }
 
-static const struct pci_device_id mana_ids[] = {
-	{ PCI_DEVICE_ID(MANA_PCI_VENDOR_ID, MANA_PCI_VF_DEVICE_ID) },
-	{ PCI_ANY_DEVICE_ID },
-};
-
 static struct pci_driver mana_driver = {
-	.device_ids = mana_ids,
+	.device_ids = mana_pci_ids,
 	.init = mana_init,
 	.add_dev = mana_add,
 };

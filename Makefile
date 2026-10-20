@@ -4,9 +4,11 @@ PYTHON ?= python3
 CPPFLAGS += -Iinclude
 CFLAGS ?= -O2 -g
 WARNINGS = -std=c11 -Wall -Wextra -Werror -pedantic
-SOURCES = src/mana.c src/pci.c src/gdma.c src/control.c src/data_queue.c src/tx.c src/rx.c
+SOURCES = src/mana.c src/pci.c src/pci_ids.c src/gdma.c src/control.c src/data_queue.c src/tx.c src/rx.c
 HEADERS = $(wildcard include/uk/*.h include/uk/mana/*.h src/*.h)
 HOST_SUPPORT = tests/host/mock.c tests/host/bootstrap.c tests/host/device.c
+# Test-only mirror headers, used by host builds of src/pci_ids.c.
+HOST_INCLUDES = -Itests/host/include
 HOST_HEADERS = $(wildcard tests/host/*.h)
 HOST_TESTS = scaffold host bootstrap control data_queue tx rx device e2e
 HOST_BINARIES = $(addprefix build/test_,$(HOST_TESTS))
@@ -29,12 +31,12 @@ all: test
 
 build/test_%: tests/test_%.c $(SOURCES) $(HEADERS) $(HOST_SUPPORT) $(HOST_HEADERS) Makefile
 	@mkdir -p build
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) $(SOURCES) $(HOST_SUPPORT) $< \
+	$(CC) $(CPPFLAGS) $(HOST_INCLUDES) $(CFLAGS) $(WARNINGS) $(SOURCES) $(HOST_SUPPORT) $< \
 		$(LDFLAGS) $(LDLIBS) -o $@
 
 build/test_%_sanitize: tests/test_%.c $(SOURCES) $(HEADERS) $(HOST_SUPPORT) $(HOST_HEADERS) Makefile
 	@mkdir -p build
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -O0 -fsanitize=address,undefined \
+	$(CC) $(CPPFLAGS) $(HOST_INCLUDES) $(CFLAGS) $(WARNINGS) -O0 -fsanitize=address,undefined \
 		-fno-omit-frame-pointer $(SOURCES) $(HOST_SUPPORT) $< $(LDFLAGS) \
 		-fsanitize=address,undefined $(LDLIBS) -o $@
 
@@ -48,13 +50,13 @@ test-sanitize: license-check $(HOST_SANITIZERS) test-netdev-sanitize
 build/test_netdev: $(NETDEV_SOURCES) $(HEADERS) $(HOST_HEADERS) Makefile \
 		$(wildcard tests/netdev/include/uk/*.h tests/netdev/include/uk/bits/*.h)
 	@mkdir -p build
-	$(CC) $(CPPFLAGS) $(NETDEV_INCLUDES) $(CFLAGS) -std=gnu11 \
+	$(CC) $(CPPFLAGS) $(HOST_INCLUDES) $(NETDEV_INCLUDES) $(CFLAGS) -std=gnu11 \
 		-Wall -Wextra -Werror $(NETDEV_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
 
 build/test_netdev_sanitize: $(NETDEV_SOURCES) $(HEADERS) $(HOST_HEADERS) Makefile \
 		$(wildcard tests/netdev/include/uk/*.h tests/netdev/include/uk/bits/*.h)
 	@mkdir -p build
-	$(CC) $(CPPFLAGS) $(NETDEV_INCLUDES) $(CFLAGS) -O0 -std=gnu11 \
+	$(CC) $(CPPFLAGS) $(HOST_INCLUDES) $(NETDEV_INCLUDES) $(CFLAGS) -O0 -std=gnu11 \
 		-Wall -Wextra -Werror -fsanitize=address,undefined \
 		-fno-omit-frame-pointer $(NETDEV_SOURCES) $(LDFLAGS) \
 		-fsanitize=address,undefined $(LDLIBS) -o $@
