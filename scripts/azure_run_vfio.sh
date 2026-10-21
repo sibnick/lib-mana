@@ -178,7 +178,7 @@ fi
 echo "============================"
 
 if [[ -n "$done_marker" ]]; then
-	printf '%s\n' "$out" | grep -E "GATE_[A-Z]+ (PASS|FAIL|SKIPPED|TIMEOUT)" || \
+	printf '%s\n' "$out" | grep -E "GATE_[A-Z]+ (PASS|FAIL|SKIP|SKIPPED|TIMEOUT)" || \
 		echo "NO_GATE_LINES"
 	printf '%s\n' "$out" | grep -E "RESTORE_(PASS|FAIL|DONE)" || true
 	printf '%s\n' "$out" | grep -q "RUNNER_DONE" || echo "NOTE: no RUNNER_DONE line"
