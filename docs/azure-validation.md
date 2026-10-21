@@ -180,19 +180,28 @@ Linux binary through `vfio-pci` in `noiommu` mode. It validates the
 protocol against real firmware. See `docs/vfio-runner.md` for the gate
 contract and the security note.
 
-Build the runner locally:
+Build the runner locally and publish it to the diagnostic storage
+account. `az vm run-command` silently drops payloads over about
+1.6 MB, so the binary travels as a gzipped blob and the host fetches
+it over a SAS URL:
 
 ```sh
 make vfio-runner
+strip build/tools/mana-vfio-runner
+gzip -9n -c build/tools/mana-vfio-runner > /tmp/mana-vfio-runner.gz
+az storage blob upload -c vfio -n mana-vfio-runner.gz \
+  --file /tmp/mana-vfio-runner.gz \
+  --account-name <account> --overwrite
 ```
 
-Run it against the live VF (the host needs the Step 3 tooling):
+Run it against the live VF. `RUNNER_SHA256` covers the stripped,
+uncompressed binary; the host verifies it after gunzip:
 
 ```sh
-AZ_RG=manaval3-rg AZ_HOST_VM=manaval3-host \
+AZ_RG=manaval3-rg AZ_HOST_VM=manaval3-peer \
 AZ_GW=10.77.1.1 \
-RUNNER_B64_FILE=build/tools/mana-vfio-runner \
-RUNNER_SHA256=<sha256 from make vfio-runner> \
+RUNNER_URL='<blob SAS URL, single-quoted>' \
+RUNNER_SHA256=<sha256 of the stripped binary> \
 VFIO_STAGES="probe gdma context packet" \
 scripts/azure_run_vfio.sh
 ```
@@ -223,30 +232,30 @@ verifies that it is gone.
 - The validation window runs with the VF detached from the host.
   Nothing else on the host keeps network during that window.
 
-## Live run status: 2026-10-21, paused
+## Live run status: 2026-10-21, first firmware contact
 
-The first live run provisioned the test bed in westus2 (`manaval3-rg`,
-host `manaval3-host`, peer `manaval3-peer`). Results:
+The test bed lives in westus2 (`manaval3-rg`). The peer VM
+`manaval3-peer` landed on MANA-capable hardware, so it now hosts the
+test. The former host `manaval3-host` (NetVSC placement) is
+deallocated. The VF reports at `7870:00:00.0` (VPCI virtual domain).
+
+Results so far:
 
 | Check | Result |
 |---|---|
-| MANA placement on D2ds_v5 | PASS. VF 1414:00ba present at 78:00.0. |
-| Nested virtualization | PASS. /dev/kvm present on kernel 7.0.0-azure. |
-| Guest vIOMMU | FAIL. Empty /sys/class/iommu, no Hyper-V partition-IOMMU feature. |
+| MANA placement on D2ds_v5 | PASS on the peer placement. |
+| Guest vIOMMU | FAIL. Empty /sys/class/iommu. Nested VFIO stays blocked. |
+| Userspace VFIO bind (noiommu) | PASS. Group `0`, node `/dev/vfio/noiommu-0`. |
+| GATE_PROBE on real firmware | PASS. id 0x00ba1414, 1024 MSI-X, BAR0 32 MB, doorbell 0x1000000/0x1000, shm 0x820000. |
+| MSI-X eventfd delivery | IRQ_MODE=msix-eventfd. Works without interrupt remapping. |
+| GATE_GDMA | FAIL err=-5 (EIO) at bootstrap start. Under diagnosis. |
 
-Nested VFIO is therefore blocked: without a guest IOMMU, the VF would
-DMA inner-guest addresses as host VM physical addresses. Azure exposes
-no per-VM vIOMMU switch for Linux D-series VMs. Microsoft's supported
-in-guest device access on such VMs is userspace VFIO in `noiommu` mode
-(the documented DPDK path), which has no nested VM and no cross-address
-space DMA.
-
-Decision: pause. Both VMs are deallocated. The resource group, network,
-NAT gateway, and storage account remain. Resume: start both VMs, rerun
-`scripts/azure_provision.sh` (rerunnable), then `scripts/azure_host_setup.sh`.
-Candidate paths forward: a Linux userspace VFIO runner that links the
-lib-mana sources against a `mana_platform` VFIO backend, or a platform
-that exposes a guest vIOMMU.
+The -5 is a verify mismatch, not a transport fault: config and MMIO
+reads work, `dma_alloc` never ran, and the COMMAND bits probe clean
+through sysfs while `mana` holds the device. The suspect is the
+vfio-emulated config space inside the bootstrap. The runner now prints
+LASTOP (failing platform operation, offset, errno) and the verify
+sites report mismatch bits, so the next run names the exact wall.
 
 ## Subscription constraints
 
@@ -268,7 +277,10 @@ a fresh subscription in October 2026:
 | Host placed on NetVSC hardware | No MANA VF. Host setup exits 11. Re-size or re-deploy on a v6 size. |
 | No vIOMMU exposed to the host VM | `vfio-pci` bind fails. Run with `AZ_ALLOW_NOIOMMU=yes` on this disposable test bed. |
 | Coordinator dies mid-run | The detached driver restores `mana` on exit, and a host watchdog restores it after `AZ_WATCHDOG_MIN` minutes. `az vm restart` is the last resort. |
-| Stale SDN state after rebind | The host may need seconds to renew its address. The report pings the gateway and prints `RESTORE_PASS` or `RESTORE_FAIL`. |
+| Stale SDN state after rebind | The host may need seconds to renew its address. The report pings the gateway and the WireServer and prints `RESTORE_PASS` or `RESTORE_FAIL`. |
+| Subnet gateway answers no ICMP | The gateway ping alone gives a false `RESTORE_FAIL`. The check also pings the Azure WireServer, 168.63.129.16. |
+| run-command silently drops large payloads | The upload phase fails or the file on the VM is short. The payload ceiling is about 1.6 MB. Ship the runner as a gzipped blob behind `RUNNER_URL`. |
+| Failed transient unit poisons the unit name | A retry prints `START_ARMED` but starts nothing. `systemctl status mana-vfio-run` shows `failed`. The coordinator clears the failed state before each start. |
 | run-command fails during the VF window | Expected. The poll loop retries until the report appears or `AZ_TEST_TIMEOUT` expires. |
 | Peer probe misses the window | Increase `AZ_TEST_WINDOW`. The driver keeps the guest up for the whole window. |
 | lwIP port downloads its upstream sources from a moving branch | The lib-lwip port checks out the `UNIKRAFT-2_1_x` fork branch without a checksum. Record the built image hash on the ticket. |
