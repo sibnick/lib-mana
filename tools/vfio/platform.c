@@ -112,19 +112,36 @@ void vfio_close_device(struct vfio_ctx *ctx)
 
 /* ---------- config space ---------- */
 
+/* Record the last failing platform operation for the gate evidence. */
+static void note_fail(struct vfio_ctx *ctx, const char *op, uint64_t off,
+		      int err)
+{
+	snprintf(ctx->last_op, sizeof(ctx->last_op), "%s", op);
+	ctx->last_off = off;
+	ctx->last_errno = err;
+}
+
 int vfio_config_read(struct vfio_ctx *ctx, uint32_t off, unsigned int width,
 		     uint32_t *value)
 {
 	unsigned char raw[4] = { 0, 0, 0, 0 };
 	ssize_t got;
 
-	if (width != 1 && width != 2 && width != 4)
+	if (width != 1 && width != 2 && width != 4) {
+		note_fail(ctx, "cfg_rd", off, -EINVAL);
 		return -EINVAL;
-	if (off % width || (uint64_t)off + width > ctx->config_size)
+	}
+	if (off % width || (uint64_t)off + width > ctx->config_size) {
+		note_fail(ctx, "cfg_rd", off, -EINVAL);
 		return -EINVAL;
+	}
 	got = pread(ctx->device_fd, raw, width, (off_t)(ctx->config_offset + off));
-	if (got != (ssize_t)width)
-		return errno > 0 ? -errno : -EIO;
+	if (got != (ssize_t)width) {
+		int e = errno > 0 ? -errno : -EIO;
+
+		note_fail(ctx, "cfg_rd", off, e);
+		return e;
+	}
 	*value = raw[0];
 	if (width >= 2)
 		*value |= (uint32_t)raw[1] << 8;
@@ -145,14 +162,22 @@ static int config_write(void *c, uint16_t off, unsigned int width,
 	struct vfio_ctx *ctx = c;
 	ssize_t put;
 
-	if (width != 1 && width != 2 && width != 4)
+	if (width != 1 && width != 2 && width != 4) {
+		note_fail(ctx, "cfg_wr", off, -EINVAL);
 		return -EINVAL;
-	if (off % width || (uint64_t)off + width > ctx->config_size)
+	}
+	if (off % width || (uint64_t)off + width > ctx->config_size) {
+		note_fail(ctx, "cfg_wr", off, -EINVAL);
 		return -EINVAL;
+	}
 	put = pwrite(ctx->device_fd, &value, width,
 		     (off_t)(ctx->config_offset + off));
-	if (put != (ssize_t)width)
-		return errno > 0 ? -errno : -EIO;
+	if (put != (ssize_t)width) {
+		int e = errno > 0 ? -errno : -EIO;
+
+		note_fail(ctx, "cfg_wr", off, e);
+		return e;
+	}
 	return 0;
 }
 
@@ -180,11 +205,13 @@ static uint32_t bar_read32(struct vfio_ctx *ctx, const struct vfio_bar *bar,
 
 	if (off % 4 || off + 4 > bar->size) {
 		ctx->mmio_errors++;
+		note_fail(ctx, "mmio_rd", off, -EINVAL);
 		return UINT32_MAX;
 	}
 	got = pread(ctx->device_fd, &value, 4, (off_t)(bar->offset + off));
 	if (got != 4) {
 		ctx->mmio_errors++;
+		note_fail(ctx, "mmio_rd", off, errno > 0 ? -errno : -EIO);
 		return UINT32_MAX;
 	}
 	return value;
@@ -222,11 +249,14 @@ static void mmio_write32(void *c, const struct mana_mapping *m, uint64_t off,
 	}
 	if (off % 4 || off + 4 > bar->size) {
 		ctx->mmio_errors++;
+		note_fail(ctx, "mmio_w32", off, -EINVAL);
 		return;
 	}
 	put = pwrite(ctx->device_fd, &value, 4, (off_t)(bar->offset + off));
-	if (put != 4)
+	if (put != 4) {
 		ctx->mmio_errors++;
+		note_fail(ctx, "mmio_w32", off, errno > 0 ? -errno : -EIO);
+	}
 }
 
 static void mmio_write64(void *c, const struct mana_mapping *m, uint64_t off,
@@ -242,6 +272,7 @@ static void mmio_write64(void *c, const struct mana_mapping *m, uint64_t off,
 	}
 	if (off % 8 || off + 8 > bar->size) {
 		ctx->mmio_errors++;
+		note_fail(ctx, "mmio_w64", off, -EINVAL);
 		return;
 	}
 	/*
@@ -250,8 +281,10 @@ static void mmio_write64(void *c, const struct mana_mapping *m, uint64_t off,
 	 * runs a 7.0 kernel, so the doorbell stays one transaction.
 	 */
 	put = pwrite(ctx->device_fd, &value, 8, (off_t)(bar->offset + off));
-	if (put != 8)
+	if (put != 8) {
 		ctx->mmio_errors++;
+		note_fail(ctx, "mmio_w64", off, errno > 0 ? -errno : -EIO);
+	}
 }
 
 static int bar_map(void *c, uint64_t physical, uint64_t size,
@@ -269,6 +302,7 @@ static int bar_map(void *c, uint64_t physical, uint64_t size,
 		mapping->size = size;
 		return 0;
 	}
+	note_fail(ctx, "bar_map", physical, -EINVAL);
 	return -EINVAL;
 }
 

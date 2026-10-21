@@ -56,6 +56,9 @@ struct vfio_ctx {
 	unsigned int mmio_errors;    /* rejected or failed MMIO accesses */
 	unsigned int unlocked;       /* DMA pages the kernel refused to mlock */
 	uint64_t dma_allocs;         /* live DMA allocations */
+	char last_op[24];            /* last failing platform operation */
+	uint64_t last_off;           /* offset or size at the failure */
+	int last_errno;              /* errno of that failure, 0 when none */
 };
 
 /* Platform and lifecycle, implemented in platform.c. */

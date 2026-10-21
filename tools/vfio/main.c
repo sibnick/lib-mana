@@ -76,6 +76,17 @@ static void gate(struct runner *r, unsigned int id, const char *verdict,
 	static const char *const names[] = { "-", "PROBE", "GDMA", "CONTEXT",
 					     "PACKET" };
 
+	if (strcmp(verdict, "FAIL") == 0) {
+		/* Name the exact failing platform operation when the
+		 * backend saw one. The driver verify sites report their
+		 * own diff bits through the error callback.
+		 */
+		if (r->x.last_op[0])
+			printf("LASTOP %s off=0x%" PRIx64 " errno=%d\n",
+			       r->x.last_op, r->x.last_off, r->x.last_errno);
+		if (r->x.mmio_errors)
+			printf("MMIOERR count=%u\n", r->x.mmio_errors);
+	}
 	printf("GATE_%s %s", names[id], verdict);
 	if (err < 0)
 		printf(" err=%d", err);
@@ -224,6 +235,24 @@ static int stage_probe(struct runner *r, const char *bdf)
 			 "id=0x%08x bars=%s msix=%u shm=0x%" PRIx64
 			 " smc_status=0x%08x", id, bars, r->x.msix_vectors, shm,
 			 status);
+	}
+	/* Test the config write path through vfio with a write that
+	 * changes nothing: COMMAND written back unchanged. The syscall
+	 * errno here is separate evidence from the driver readback
+	 * verify, which runs in the gdma stage.
+	 */
+	{
+		const struct mana_platform *p = vfio_platform(&r->x);
+		uint32_t cmd = 0;
+		int werr = p->config_read(p->ctx, 4, 2, &cmd);
+
+		if (!werr)
+			werr = p->config_write(p->ctx, 4, 2, (uint16_t)cmd);
+		if (werr)
+			emit("CFGWR err=%d cmd=0x%04x", werr,
+			     (unsigned int)cmd);
+		else
+			emit("CFGWR ok cmd=0x%04x", (unsigned int)cmd);
 	}
 	gate(r, STAGE_PROBE, "PASS", 0);
 	return 0;

@@ -27,7 +27,12 @@ int mana_pci_command(struct mana_bootstrap *b, uint16_t command)
 		err = cfg_read(b, 4, 2, &v);
 	if (err)
 		return err;
-	return ((v ^ command) & 0x407) ? -EIO : 0;
+	if ((v ^ command) & 0x407) {
+		b->p->error(b->p->ctx, "cmd_verify_diff",
+			    -(int)((v ^ command) & 0x407U));
+		return -EIO;
+	}
+	return 0;
 }
 
 /* Write the MSI-X Message Control and verify the write by readback.
@@ -43,7 +48,12 @@ static int mana_msix_control(struct mana_bootstrap *b, uint16_t control)
 		err = cfg_read(b, b->msix_cap + 2, 2, &v);
 	if (err)
 		return err;
-	return ((v ^ control) & 0xc000) ? -EIO : 0;
+	if ((v ^ control) & 0xc000) {
+		b->p->error(b->p->ctx, "msix_verify_diff",
+			    -(int)((v ^ control) & 0xc000U));
+		return -EIO;
+	}
+	return 0;
 }
 
 static int read_bars(struct mana_bootstrap *b)
