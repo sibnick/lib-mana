@@ -438,7 +438,7 @@ static int packet_errors(void)
 			TEST_CHECK(mana_tx_submit(&f.tx, frame, 60, frame) == 1);
 			completion(&f, type, vendor ? 0x123456 : 0);
 			TEST_CHECK(mana_tx_poll(&f.tx, &result) == 1);
-			TEST_CHECK(result.error == (type == 32 && !vendor ? 0 : -EIO));
+			TEST_CHECK(result.error == (type == 32 ? 0 : -EIO));
 			TEST_CHECK(result.type == type && result.cookie == frame);
 			TEST_CHECK(result.vendor_error == (vendor ? 0x123456U : 0));
 			TEST_CHECK(!f.tx.quarantined && !f.packet_live);

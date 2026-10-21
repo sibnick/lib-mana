@@ -242,10 +242,20 @@ int mana_tx_poll(struct mana_tx *tx, struct mana_tx_result *result)
 		.data_offset = mana_get32(completion.data + 4),
 		.sgl_offset = mana_get32(completion.data + 8) & 31,
 		.wqe_offset = mana_get32(completion.data + 8) >> 5,
-		.error = type == TX_OKAY && !(header >> 8) ? 0 : -EIO
+		.error = type == TX_OKAY ? 0 : -EIO
 	};
 	if (result->error)
 		report(tx, "TX packet completion", result->error);
+	else if (result->vendor_error)
+		/*
+		 * The pin derives the error from the completion type only
+		 * (mana_process_tx_cqe: CQE_TX_OKAY means success). A
+		 * non-zero vendor_err rides along as information; live
+		 * Azure firmware sets it on accepted frames. Report the
+		 * value as a note and keep the success.
+		 */
+		report(tx, "TX vendor note",
+		       -(int)(result->vendor_error & 0xffffffU));
 	p = platform(tx);
 	p->dma_free(p->ctx, &record->dma);
 	memset(record, 0, sizeof(*record));

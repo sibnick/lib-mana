@@ -360,7 +360,7 @@ static int vendor_error(void)
 	TEST_CHECK(mana_tx_submit(&f.tx, frame, sizeof(frame), (void *)1) == 1);
 	host_device_tick(&f.dev, 8);
 	TEST_CHECK(mana_tx_poll(&f.tx, &result) == 1);
-	TEST_CHECK(result.error == -EIO && result.type == 32);
+	TEST_CHECK(result.error == 0 && result.type == 32);
 	TEST_CHECK(result.vendor_error == 0x123456);
 	TEST_CHECK(!f.tx.quarantined && !f.data.quarantined);
 	/* The queue stays usable for the next packet. */
