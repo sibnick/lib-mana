@@ -9,10 +9,16 @@
 # The host loses network while the VF is away from the mana driver. The
 # work runs detached through systemd-run. A watchdog restores the driver
 # even if this coordinator dies. Polls between phases tolerate failures.
+#
+# Binary transport: RUNNER_URL (https, for example a storage blob SAS
+# URL) for normal builds, or RUNNER_B64_FILE for small files. Keep
+# run-command payloads small. The extension drops large scripts without
+# an error (observed: 1.6 MB base64 payloads never execute).
 set -euo pipefail
 
 AZ_RG="${AZ_RG:-}"
 AZ_HOST_VM="${AZ_HOST_VM:-}"
+RUNNER_URL="${RUNNER_URL:-}"
 RUNNER_B64_FILE="${RUNNER_B64_FILE:-}"
 RUNNER_SHA256="${RUNNER_SHA256:-}"
 VFIO_STAGES="${VFIO_STAGES:-probe gdma context packet}"
@@ -21,9 +27,14 @@ POLL_TRIES="${AZ_POLL_TRIES:-40}"
 GW="${AZ_GW:-}"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
-[[ -n "$AZ_RG" && -n "$AZ_HOST_VM" && -n "$RUNNER_B64_FILE" ]] || \
-	fail "AZ_RG, AZ_HOST_VM, RUNNER_B64_FILE are required"
-[[ -f "$RUNNER_B64_FILE" ]] || fail "runner file not found: $RUNNER_B64_FILE"
+[[ -n "$AZ_RG" && -n "$AZ_HOST_VM" ]] || \
+	fail "AZ_RG and AZ_HOST_VM are required"
+if [[ -z "$RUNNER_URL" && -z "$RUNNER_B64_FILE" ]]; then
+	fail "set RUNNER_URL (https) or RUNNER_B64_FILE"
+fi
+if [[ -n "$RUNNER_B64_FILE" && ! -f "$RUNNER_B64_FILE" ]]; then
+	fail "runner file not found: $RUNNER_B64_FILE"
+fi
 
 work=$(mktemp -d /tmp/mana-run-vfio.XXXXXX)
 trap 'rm -rf "$work"' EXIT
@@ -59,14 +70,23 @@ printf '#!/bin/sh\nset -eu\n' > "$payload_a"
 	printf 'WATCHDOG_MIN=%s\n' "'$WATCHDOG_MIN'"
 	printf 'GW=%s\n' "'$GW'"
 	printf 'RUNNER_SHA256=%s\n' "'${RUNNER_SHA256}'"
+	printf 'RUNNER_URL=%s\n' "'${RUNNER_URL}'"
 } >> "$payload_a"
 cat >> "$payload_a" <<'BODY_HEAD'
 RUNNER=/usr/local/bin/mana-vfio-runner
-base64 -d > "$RUNNER" <<'EOB64'
+if [ -n "$RUNNER_URL" ]; then
+	curl -fsSL "$RUNNER_URL" -o /tmp/mana-vfio-runner.gz
+	gunzip -c /tmp/mana-vfio-runner.gz > "$RUNNER"
+	rm -f /tmp/mana-vfio-runner.gz
+else
+	base64 -d > "$RUNNER" <<'EOB64'
 BODY_HEAD
-base64 "$RUNNER_B64_FILE" >> "$payload_a"
+if [[ -z "$RUNNER_URL" ]]; then
+	base64 "$RUNNER_B64_FILE" >> "$payload_a"
+fi
 cat >> "$payload_a" <<'BODY_TAIL'
 EOB64
+fi
 chmod 755 "$RUNNER"
 if [ -n "$RUNNER_SHA256" ]; then
 	printf '%s  %s\n' "$RUNNER_SHA256" "$RUNNER" | sha256sum -c -
