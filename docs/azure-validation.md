@@ -250,7 +250,10 @@ Results:
 | MSI-X eventfd delivery | IRQ_MODE=msix-eventfd. Works without interrupt remapping. |
 | GATE_GDMA | PASS. SMC wait, HWC init, QUERY_DEVICE. dev_id=2, depth=4, limits sq/rq/cq=1024 eq=128 db=4096. |
 | GATE_CONTEXT | PASS. PD, mkey, doorbell page, vport. Real MAC, MTU 1500, link 12500 Mbps. |
-| GATE_PACKET | PASS with caveat. TX path completes (doorbell, device DMA, CQE, EQ event, 22 interrupts). The firmware sets a non-zero 24-bit CQE vendor_err on the test ARP frame. Value under diagnosis. |
+| GATE_PACKET | PASS. TX accepted: CQE type 32 (TX_OKAY), error 0. The firmware adds vendor_err 0xe00001, an informational note that the port reports like the pin. RX queues create, refill, and steer clean. |
+
+Final clean run: all four gates PASS, every teardown step ok,
+`RUNNER_DONE packet`, `RESTORE_PASS attempt=1`.
 
 Solved on the way: the numeric sysfs group versus `noiommu-N` node
 naming, the kernel-owned MSI-X control bits (the backend virtualizes
