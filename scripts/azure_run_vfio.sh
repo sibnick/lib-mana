@@ -118,12 +118,15 @@ cleanup() {
 	n=0
 	while [ "\$n" -lt 6 ]; do
 		n=\$((n+1))
-		if [ -n '$GW' ]; then
-			if ping -c 3 -W 2 '$GW' > /dev/null 2>&1; then
-				restore_ok=yes
-				break
-			fi
-		else
+		if [ -z '$GW' ]; then
+			restore_ok=yes
+			break
+		fi
+		if ping -c 2 -W 2 '$GW' > /dev/null 2>&1; then
+			restore_ok=yes
+			break
+		fi
+		if ping -c 2 -W 2 168.63.129.16 > /dev/null 2>&1; then
 			restore_ok=yes
 			break
 		fi

@@ -685,7 +685,23 @@ static int open_group_fd(const char *bdf, bool *noiommu)
 	if (strchr(name, '-') == NULL) {
 		snprintf(path, sizeof(path), "/dev/vfio/%.64s", name);
 		fd = open(path, O_RDWR | O_CLOEXEC);
-		return fd < 0 ? -errno : fd;
+		if (fd >= 0)
+			return fd;
+		if (errno != ENOENT)
+			return -errno;
+		/* Kernels may name the sysfs group numerically and the
+		 * noiommu device node noiommu-<id>. Observed on 7.0.0-azure:
+		 * sysfs kernel/iommu_groups/0 and node /dev/vfio/noiommu-0.
+		 * Try the direct node, then fall through to the live scan.
+		 */
+		snprintf(path, sizeof(path), "/dev/vfio/noiommu-%.64s", name);
+		fd = open(path, O_RDWR | O_CLOEXEC);
+		if (fd >= 0) {
+			*noiommu = true;
+			return fd;
+		}
+		if (errno != ENOENT)
+			return -errno;
 	}
 	*noiommu = true;
 	if (strncmp(name, "noiommu-", 8) == 0 ||
