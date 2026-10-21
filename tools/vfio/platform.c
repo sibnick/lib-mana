@@ -112,6 +112,9 @@ void vfio_close_device(struct vfio_ctx *ctx)
 
 /* ---------- config space ---------- */
 
+static int set_irqs(struct vfio_ctx *ctx, uint32_t flags, unsigned int count,
+		    int fd);
+
 /* Record the last failing platform operation for the gate evidence. */
 static void note_fail(struct vfio_ctx *ctx, const char *op, uint64_t off,
 		      int err)
@@ -119,6 +122,39 @@ static void note_fail(struct vfio_ctx *ctx, const char *op, uint64_t off,
 	snprintf(ctx->last_op, sizeof(ctx->last_op), "%s", op);
 	ctx->last_off = off;
 	ctx->last_errno = err;
+}
+
+/*
+ * The kernel owns the emulated MSI-X Message Control and drops
+ * userspace writes to the Enable and Function Mask bits. Raw config
+ * reads then report kernel state, not what userspace wrote. The driver
+ * follows the bare-metal model: it writes these bits and verifies the
+ * readback. Virtualize the two writable bits here so the verify sees
+ * its write, and mirror the Enable transition into SET_IRQS, the real
+ * enable mechanism on this platform. The driver's irq_alloc already
+ * registered the eventfd trigger before the Enable write, so the
+ * transition is an idempotent re-assert; clearing Enable releases it.
+ */
+static int msix_ctrl_write(struct vfio_ctx *ctx, uint16_t control)
+{
+	bool was_enabled = (ctx->msix_ctrl_virt & 0x8000) != 0;
+	bool is_enabled = (control & 0x8000) != 0;
+	int err = 0;
+
+	if (!was_enabled && is_enabled &&
+	    ctx->irq_mode == VFIO_IRQ_MODE_MSIX_EVENTFD)
+		err = set_irqs(ctx,
+			       VFIO_IRQ_SET_DATA_EVENTFD |
+				   VFIO_IRQ_SET_ACTION_TRIGGER,
+			       1, ctx->event_fd);
+	else if (was_enabled && !is_enabled)
+		err = set_irqs(ctx, VFIO_IRQ_SET_DATA_NONE |
+				   VFIO_IRQ_SET_ACTION_TRIGGER, 0, -1);
+	if (err)
+		return err;
+	ctx->msix_ctrl_virt = (uint16_t)((control & 0xc000U) |
+					 (ctx->msix_ctrl_virt & 0x03ffU));
+	return 0;
 }
 
 int vfio_config_read(struct vfio_ctx *ctx, uint32_t off, unsigned int width,
@@ -134,6 +170,10 @@ int vfio_config_read(struct vfio_ctx *ctx, uint32_t off, unsigned int width,
 	if (off % width || (uint64_t)off + width > ctx->config_size) {
 		note_fail(ctx, "cfg_rd", off, -EINVAL);
 		return -EINVAL;
+	}
+	if (ctx->msix_cap && width == 2 && off == (uint32_t)ctx->msix_cap + 2) {
+		*value = ctx->msix_ctrl_virt;
+		return 0;
 	}
 	got = pread(ctx->device_fd, raw, width, (off_t)(ctx->config_offset + off));
 	if (got != (ssize_t)width) {
@@ -169,6 +209,16 @@ static int config_write(void *c, uint16_t off, unsigned int width,
 	if (off % width || (uint64_t)off + width > ctx->config_size) {
 		note_fail(ctx, "cfg_wr", off, -EINVAL);
 		return -EINVAL;
+	}
+	if (ctx->msix_cap && width == 2 &&
+	    (uint32_t)off == (uint32_t)ctx->msix_cap + 2) {
+		int err = msix_ctrl_write(ctx, (uint16_t)value);
+
+		if (err) {
+			note_fail(ctx, "msix_ctrl", off, err);
+			return err;
+		}
+		return 0;
 	}
 	put = pwrite(ctx->device_fd, &value, width,
 		     (off_t)(ctx->config_offset + off));
@@ -865,6 +915,41 @@ static void fill_bar_table(struct vfio_ctx *ctx)
 	}
 }
 
+/*
+ * Locate the MSI-X capability and seed the virtual control image so
+ * config reads of Message Control stay consistent with userspace
+ * writes. See msix_ctrl_write.
+ */
+static void virtualize_msix_ctrl(struct vfio_ctx *ctx)
+{
+	uint32_t ptr = 0, id = 0, next = 0, ctrl = 0;
+	unsigned int hops;
+
+	if (vfio_config_read(ctx, 0x34, 1, &ptr))
+		return;
+	for (hops = 0; hops < 48; hops++) {
+		if (ptr < 0x40 || ptr + 8 > ctx->config_size)
+			return;
+		if (vfio_config_read(ctx, ptr, 1, &id))
+			return;
+		if (id == 0x11) {
+			ctx->msix_cap = (uint16_t)ptr;
+			if (vfio_config_read(ctx, ptr + 2, 2, &ctrl) == 0)
+				ctx->msix_ctrl_virt = (uint16_t)ctrl;
+			printf("MSIXCAP off=0x%x ctrl=0x%04x\n",
+			       (unsigned int)ptr,
+			       (unsigned int)ctx->msix_ctrl_virt);
+			return;
+		}
+		if (vfio_config_read(ctx, ptr + 1, 1, &next))
+			return;
+		next &= 0xfc;
+		if (next == 0 || next == ptr)
+			return;
+		ptr = next;
+	}
+}
+
 int vfio_open_device(struct vfio_ctx *ctx, const char *bdf)
 {
 	struct vfio_group_status status = { .argsz = sizeof(status) };
@@ -879,6 +964,8 @@ int vfio_open_device(struct vfio_ctx *ctx, const char *bdf)
 	ctx->group_fd = -1;
 	ctx->device_fd = -1;
 	ctx->event_fd = -1;
+	ctx->msix_cap = 0;
+	ctx->msix_ctrl_virt = 0;
 
 	err = check_bound_driver(bdf);
 	if (err)
@@ -932,6 +1019,7 @@ int vfio_open_device(struct vfio_ctx *ctx, const char *bdf)
 	if (ioctl(ctx->device_fd, VFIO_DEVICE_GET_IRQ_INFO, &irq) == 0 &&
 	    (irq.flags & VFIO_IRQ_INFO_EVENTFD))
 		ctx->msix_vectors = irq.count;
+	virtualize_msix_ctrl(ctx);
 	return 0;
 }
 

@@ -40,6 +40,8 @@ struct vfio_ctx {
 	enum vfio_irq_mode irq_mode;
 	int irq_errno;               /* errno from the SET_IRQS probe */
 	unsigned int msix_vectors;   /* table size from VFIO or the capability */
+	uint16_t msix_cap;           /* MSI-X capability offset, 0 if none */
+	uint16_t msix_ctrl_virt;     /* virtualized MSI-X Message Control */
 	uint32_t msix_table;         /* capability dword: BIR plus offset */
 	uint32_t msix_pba;           /* capability dword: BIR plus offset */
 	struct vfio_bar bars[VFIO_BAR_COUNT];
