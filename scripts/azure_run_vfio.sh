@@ -114,11 +114,23 @@ cleanup() {
 	echo "\$bdf" > "/sys/bus/pci/drivers/vfio-pci/unbind" 2>/dev/null || true
 	echo "" > "/sys/bus/pci/devices/\$bdf/driver_override" 2>/dev/null || true
 	echo "\$bdf" > /sys/bus/pci/drivers/mana/bind 2>/dev/null || true
-	sleep 10
-	if [ -n '$GW' ] && ping -c 3 -W 2 '$GW' > /dev/null 2>&1; then
-		echo "RESTORE_PASS"
-	elif [ -z '$GW' ]; then
-		echo "RESTORE_DONE"
+	restore_ok=""
+	n=0
+	while [ "\$n" -lt 6 ]; do
+		n=\$((n+1))
+		if [ -n '$GW' ]; then
+			if ping -c 3 -W 2 '$GW' > /dev/null 2>&1; then
+				restore_ok=yes
+				break
+			fi
+		else
+			restore_ok=yes
+			break
+		fi
+		sleep 5
+	done
+	if [ -n "\$restore_ok" ]; then
+		echo "RESTORE_PASS attempt=\$n"
 	else
 		echo "RESTORE_FAIL"
 	fi
@@ -127,8 +139,12 @@ cleanup() {
 trap cleanup EXIT
 
 # The Azure guest kernel keeps noiommu support in the vfio core module.
-echo 1 > /sys/module/vfio/parameters/enable_unsafe_noiommu_mode
-modprobe vfio-pci
+# Load vfio first: the parameter node does not exist before load, and
+# the vfio core rejects devices without a group (probe error -22)
+# unless noiommu mode is on BEFORE the driver bind.
+modprobe vfio-pci || exit 1
+echo 1 > /sys/module/vfio/parameters/enable_unsafe_noiommu_mode || exit 1
+modprobe vfio_iommu_type1 2>/dev/null || true
 echo "\$bdf" > "/sys/bus/pci/drivers/mana/unbind" || exit 1
 echo vfio-pci > "/sys/bus/pci/devices/\$bdf/driver_override"
 echo "\$bdf" > /sys/bus/pci/drivers/vfio-pci/bind || exit 1
