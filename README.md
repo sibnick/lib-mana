@@ -37,6 +37,8 @@ The MVP does not promise network continuity during VF removal.
 | `scripts/prepare-lib-lwip.sh` | Pinned lib-lwip source preparation for the workload image |
 | `scripts/azure_provision.sh`, `scripts/azure_host_setup.sh`, `scripts/azure_run_test.sh`, `scripts/azure_teardown.sh` | Azure lifecycle scripts for validation ticket `50b980feba` |
 | `docs/azure-validation.md` | Coordinator runbook for the nested QEMU Azure validation |
+| `tools/vfio/` | Userspace VFIO gate runner for the live MANA VF |
+| `docs/vfio-runner.md` | Runner usage, evidence contract, VFIO platform findings |
 | `tests/test_msix.c`, `tests/test_pic.c`, `tests/msix/` | Actual patch checks with IRQ, CPUID, and PIC I/O mocks |
 | `patches/` | Required local xPIC MSI-X patch |
 | `docs/firmware-tolerance.md` | Per-case inventory of strict firmware rejections versus the Linux pin, with decisions and Azure gates |
@@ -67,7 +69,23 @@ The reusable bootstrap model covers GDMA/HWC transport.
 Host tests do not prove DMA coherency or actual packet traffic.
 `make clean` removes host test binaries. It keeps the downloaded core.
 The license check covers project-owned C headers, sources, and build scripts.
+It also covers `tools/`.
 New code uses BSD-3-Clause. Keep notices when adapting third-party code.
+
+## VFIO gate runner
+
+```sh
+make vfio-runner
+make vfio-selftest
+```
+
+`make vfio-runner` builds `build/tools/mana-vfio-runner`. It is a compile
+and license check. It does not run the gates. The gates need the live
+MANA VF on an Azure VM, bound to `vfio-pci` by the coordinator.
+`make vfio-selftest` runs the device-free DMA allocator selftest on this
+machine. Neither target is part of `make test`.
+See [VFIO gate runner](docs/vfio-runner.md) for usage and evidence
+contract.
 
 ## Unikraft compile and link check
 

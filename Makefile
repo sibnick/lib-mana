@@ -13,6 +13,13 @@ HOST_HEADERS = $(wildcard tests/host/*.h)
 HOST_TESTS = scaffold host bootstrap control data_queue tx rx device e2e
 HOST_BINARIES = $(addprefix build/test_,$(HOST_TESTS))
 HOST_SANITIZERS = $(addsuffix _sanitize,$(HOST_BINARIES))
+VFIO_SOURCES = $(wildcard tools/vfio/*.c)
+VFIO_HEADERS = $(wildcard tools/vfio/*.h)
+VFIO_BIN = build/tools/mana-vfio-runner
+# Prefer a static binary so the runner survives target hosts without glibc
+# matches. Drop -static when the local toolchain has no static libc.
+VFIO_STATIC := $(shell printf 'int main(void){return 0;}' | $(CC) -static -x c - \
+	-o /dev/null >/dev/null 2>&1 && echo -static)
 ROOT := $(CURDIR)
 UK_SOURCE ?= $(ROOT)/build/unikraft
 UK_BUILD := $(ROOT)/build/unikraft-test
@@ -35,7 +42,7 @@ NETDEV_SOURCES = $(SOURCES) src/netdev.c $(HOST_SUPPORT) tests/test_netdev.c \
 
 .PHONY: all test test-sanitize sanitize license-check clean prepare-unikraft \
 	test-msix unikraft-test test-netdev test-netdev-sanitize \
-	prepare-lib-lwip workload-image
+	prepare-lib-lwip workload-image vfio-runner vfio-selftest
 all: test
 
 build/test_%: tests/test_%.c $(SOURCES) $(HEADERS) $(HOST_SUPPORT) $(HOST_HEADERS) Makefile
@@ -78,6 +85,20 @@ test-netdev: prepare-unikraft license-check build/test_netdev
 
 test-netdev-sanitize: prepare-unikraft license-check build/test_netdev_sanitize
 	./build/test_netdev_sanitize
+
+# Compile-only check for the VFIO runner. The binary links the real driver
+# sources against the tools/vfio platform backend. It is not part of test
+# because the gates that use it need the live MANA VF.
+$(VFIO_BIN): $(VFIO_SOURCES) $(VFIO_HEADERS) $(SOURCES) $(HEADERS) Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(HOST_INCLUDES) $(CFLAGS) $(WARNINGS) \
+		$(SOURCES) $(VFIO_SOURCES) $(LDFLAGS) $(VFIO_STATIC) $(LDLIBS) \
+		-o $@
+
+vfio-runner: license-check $(VFIO_BIN)
+
+vfio-selftest: $(VFIO_BIN)
+	./$(VFIO_BIN) selftest
 
 license-check:
 	$(PYTHON) scripts/check-license.py
@@ -135,4 +156,4 @@ workload-image: prepare-unikraft prepare-lib-lwip
 
 clean:
 	$(RM) $(HOST_BINARIES) $(HOST_SANITIZERS) build/test_msix build/test_pic \
-		build/test_netdev build/test_netdev_sanitize
+		build/test_netdev build/test_netdev_sanitize $(VFIO_BIN)
