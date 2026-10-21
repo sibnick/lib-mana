@@ -232,14 +232,14 @@ verifies that it is gone.
 - The validation window runs with the VF detached from the host.
   Nothing else on the host keeps network during that window.
 
-## Live run status: 2026-10-21, first firmware contact
+## Live run status: 2026-10-21, full protocol stack passes
 
 The test bed lives in westus2 (`manaval3-rg`). The peer VM
 `manaval3-peer` landed on MANA-capable hardware, so it now hosts the
 test. The former host `manaval3-host` (NetVSC placement) is
 deallocated. The VF reports at `7870:00:00.0` (VPCI virtual domain).
 
-Results so far:
+Results:
 
 | Check | Result |
 |---|---|
@@ -248,14 +248,18 @@ Results so far:
 | Userspace VFIO bind (noiommu) | PASS. Group `0`, node `/dev/vfio/noiommu-0`. |
 | GATE_PROBE on real firmware | PASS. id 0x00ba1414, 1024 MSI-X, BAR0 32 MB, doorbell 0x1000000/0x1000, shm 0x820000. |
 | MSI-X eventfd delivery | IRQ_MODE=msix-eventfd. Works without interrupt remapping. |
-| GATE_GDMA | FAIL err=-5 (EIO) at bootstrap start. Under diagnosis. |
+| GATE_GDMA | PASS. SMC wait, HWC init, QUERY_DEVICE. dev_id=2, depth=4, limits sq/rq/cq=1024 eq=128 db=4096. |
+| GATE_CONTEXT | PASS. PD, mkey, doorbell page, vport. Real MAC, MTU 1500, link 12500 Mbps. |
+| GATE_PACKET | PASS with caveat. TX path completes (doorbell, device DMA, CQE, EQ event, 22 interrupts). The firmware sets a non-zero 24-bit CQE vendor_err on the test ARP frame. Value under diagnosis. |
 
-The -5 is a verify mismatch, not a transport fault: config and MMIO
-reads work, `dma_alloc` never ran, and the COMMAND bits probe clean
-through sysfs while `mana` holds the device. The suspect is the
-vfio-emulated config space inside the bootstrap. The runner now prints
-LASTOP (failing platform operation, offset, errno) and the verify
-sites report mismatch bits, so the next run names the exact wall.
+Solved on the way: the numeric sysfs group versus `noiommu-N` node
+naming, the kernel-owned MSI-X control bits (the backend virtualizes
+them and mirrors Enable into SET_IRQS), the double release of vector 0
+at teardown (the kernel answers the second release with EINVAL), and
+the post-reset control read of zero (seed the table size from the VFIO
+vector count). ICMP is blocked on this guest for both the subnet
+gateway and the WireServer, so the restore check probes the IMDS
+endpoint over TCP instead.
 
 ## Subscription constraints
 
@@ -278,7 +282,7 @@ a fresh subscription in October 2026:
 | No vIOMMU exposed to the host VM | `vfio-pci` bind fails. Run with `AZ_ALLOW_NOIOMMU=yes` on this disposable test bed. |
 | Coordinator dies mid-run | The detached driver restores `mana` on exit, and a host watchdog restores it after `AZ_WATCHDOG_MIN` minutes. `az vm restart` is the last resort. |
 | Stale SDN state after rebind | The host may need seconds to renew its address. The report pings the gateway and the WireServer and prints `RESTORE_PASS` or `RESTORE_FAIL`. |
-| Subnet gateway answers no ICMP | The gateway ping alone gives a false `RESTORE_FAIL`. The check also pings the Azure WireServer, 168.63.129.16. |
+| ICMP blocked on the guest | The subnet gateway and the WireServer both drop echo requests on a healthy network. The restore check probes the IMDS endpoint (169.254.169.254) over TCP. |
 | run-command silently drops large payloads | The upload phase fails or the file on the VM is short. The payload ceiling is about 1.6 MB. Ship the runner as a gzipped blob behind `RUNNER_URL`. |
 | Failed transient unit poisons the unit name | A retry prints `START_ARMED` but starts nothing. `systemctl status mana-vfio-run` shows `failed`. The coordinator clears the failed state before each start. |
 | run-command fails during the VF window | Expected. The poll loop retries until the report appears or `AZ_TEST_TIMEOUT` expires. |
