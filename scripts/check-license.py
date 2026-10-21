@@ -20,7 +20,7 @@ def main():
     files = [
         ROOT / name for name in ("Makefile", "Makefile.uk", "Config.uk", "Kraftfile")
     ]
-    for directory in ("src", "include", "tests", "scripts", "samples"):
+    for directory in ("src", "include", "tests", "scripts", "samples", "tools"):
         files.extend(
             path
             for path in (ROOT / directory).rglob("*")
