@@ -39,6 +39,7 @@ struct vfio_ctx {
 	int event_fd;                /* MSI-X eventfd, -1 when unused */
 	enum vfio_irq_mode irq_mode;
 	int irq_errno;               /* errno from the SET_IRQS probe */
+	bool irq_armed;              /* SET_IRQS trigger currently registered */
 	unsigned int msix_vectors;   /* table size from VFIO or the capability */
 	uint16_t msix_cap;           /* MSI-X capability offset, 0 if none */
 	uint16_t msix_ctrl_virt;     /* virtualized MSI-X Message Control */

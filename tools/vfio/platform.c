@@ -567,7 +567,20 @@ static int set_irqs(struct vfio_ctx *ctx, uint32_t flags, unsigned int count,
 {
 	struct vfio_irq_set *req;
 	size_t size = sizeof(*req) + (count ? sizeof(fd) : 0);
+	bool release = count == 0 &&
+		       (flags & VFIO_IRQ_SET_ACTION_TRIGGER) &&
+		       (flags & VFIO_IRQ_SET_DATA_TYPE_MASK) ==
+			   VFIO_IRQ_SET_DATA_NONE;
 	int err = 0;
+
+	/*
+	 * Clearing the MSI-X control bit and releasing the IRQ both
+	 * release vector 0. The kernel rejects a second release on
+	 * disabled MSI-X with EINVAL, so track the armed state and make
+	 * the redundant release a no-op.
+	 */
+	if (release && !ctx->irq_armed)
+		return 0;
 
 	req = calloc(1, size);
 	if (!req)
@@ -582,6 +595,12 @@ static int set_irqs(struct vfio_ctx *ctx, uint32_t flags, unsigned int count,
 	if (ioctl(ctx->device_fd, VFIO_DEVICE_SET_IRQS, req) != 0)
 		err = -errno;
 	free(req);
+	if (!err) {
+		if (count > 0 && (flags & VFIO_IRQ_SET_DATA_EVENTFD))
+			ctx->irq_armed = true;
+		else if (release)
+			ctx->irq_armed = false;
+	}
 	return err;
 }
 
@@ -936,6 +955,16 @@ static void virtualize_msix_ctrl(struct vfio_ctx *ctx)
 			ctx->msix_cap = (uint16_t)ptr;
 			if (vfio_config_read(ctx, ptr + 2, 2, &ctrl) == 0)
 				ctx->msix_ctrl_virt = (uint16_t)ctrl;
+			/*
+			 * The emulated control can read zero right after a
+			 * function-level reset. Seed the table size bits
+			 * from the VFIO vector count so the driver sizes
+			 * and scans the full table like on bare metal.
+			 */
+			if (ctx->msix_vectors > 0 && ctx->msix_vectors <= 2048)
+				ctx->msix_ctrl_virt = (uint16_t)(
+					(ctx->msix_ctrl_virt & 0xc000U) |
+					((ctx->msix_vectors - 1U) & 0x7ffU));
 			printf("MSIXCAP off=0x%x ctrl=0x%04x\n",
 			       (unsigned int)ptr,
 			       (unsigned int)ctx->msix_ctrl_virt);
@@ -966,6 +995,7 @@ int vfio_open_device(struct vfio_ctx *ctx, const char *bdf)
 	ctx->event_fd = -1;
 	ctx->msix_cap = 0;
 	ctx->msix_ctrl_virt = 0;
+	ctx->irq_armed = false;
 
 	err = check_bound_driver(bdf);
 	if (err)

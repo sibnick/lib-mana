@@ -469,10 +469,10 @@ static int stage_packet(struct runner *r)
 		usleep(1000);
 	}
 	snprintf(r->detail, sizeof(r->detail),
-		 "tx=complete tx_err=%d type=%u rx_seen=%d rx_dropped=%d"
-		 " irq_events=%llu",
-		 result.error, result.type, rx_seen, rx_dropped,
-		 (unsigned long long)r->x.irq_events);
+		 "tx=complete tx_err=%d type=%u verr=0x%x rx_seen=%d"
+		 " rx_dropped=%d irq_events=%llu",
+		 result.error, result.type, result.vendor_error, rx_seen,
+		 rx_dropped, (unsigned long long)r->x.irq_events);
 	gate(r, STAGE_PACKET, "PASS", 0);
 	return 0;
 }

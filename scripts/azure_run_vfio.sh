@@ -118,11 +118,15 @@ cleanup() {
 	n=0
 	while [ "\$n" -lt 6 ]; do
 		n=\$((n+1))
-		if [ -z '$GW' ]; then
+		# ICMP is blocked on this guest: both the subnet gateway and
+		# the WireServer drop echo requests on a healthy network.
+		# Probe the IMDS endpoint over TCP first.
+		if curl -fsS -m 4 -H "Metadata: true" \
+			"http://169.254.169.254/metadata/instance?api-version=2021-02-01" > /dev/null 2>&1; then
 			restore_ok=yes
 			break
 		fi
-		if ping -c 2 -W 2 '$GW' > /dev/null 2>&1; then
+		if [ -n '$GW' ] && ping -c 2 -W 2 '$GW' > /dev/null 2>&1; then
 			restore_ok=yes
 			break
 		fi
