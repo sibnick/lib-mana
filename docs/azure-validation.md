@@ -208,8 +208,9 @@ scripts/azure_run_vfio.sh
 
 The script arms a detached driver, moves the VF from `mana` to
 `vfio-pci`, runs the gates, restores `mana`, and prints the report.
-Exit 11 from the arm phase means this host placement has no MANA VF.
-Redeploy and retry: `az vm redeploy`, wait, run Step 3 again.
+Exit 11 means this host placement has no MANA VF. Delete the VM and
+create a fresh one to re-roll placement; redeploy does not move the
+NIC pool. Then run Step 3 again.
 
 ## Step 5: Tear down
 
@@ -255,6 +256,12 @@ Results:
 Final clean run: all four gates PASS, every teardown step ok,
 `RUNNER_DONE packet`, `RESTORE_PASS attempt=1`.
 
+The test bed was torn down on 2026-10-22 and ticket `50b980feba`
+closed Fixed. To repeat a run: `scripts/azure_provision.sh`, then
+`scripts/azure_host_setup.sh`, then Step 4b. MANA placement on a size
+is a hardware lottery. Redeploy does not move a VM to another NIC
+pool; delete and create a fresh VM to re-roll placement.
+
 Solved on the way: the numeric sysfs group versus `noiommu-N` node
 naming, the kernel-owned MSI-X control bits (the backend virtualizes
 them and mirrors Enable into SET_IRQS), the double release of vector 0
@@ -281,7 +288,7 @@ a fresh subscription in October 2026:
 
 | Risk | Effect and handling |
 |---|---|
-| Host placed on NetVSC hardware | No MANA VF. Host setup exits 11. Re-size or re-deploy on a v6 size. |
+| Host placed on NetVSC hardware | No MANA VF. Host setup exits 11. Delete and create a fresh VM; redeploy does not move the NIC pool. |
 | No vIOMMU exposed to the host VM | `vfio-pci` bind fails. Run with `AZ_ALLOW_NOIOMMU=yes` on this disposable test bed. |
 | Coordinator dies mid-run | The detached driver restores `mana` on exit, and a host watchdog restores it after `AZ_WATCHDOG_MIN` minutes. `az vm restart` is the last resort. |
 | Stale SDN state after rebind | The host may need seconds to renew its address. The report pings the gateway and the WireServer and prints `RESTORE_PASS` or `RESTORE_FAIL`. |
