@@ -172,6 +172,36 @@ log stays on the host at `/root/mana-guest-serial.log`. It shows the
 probe. A boot diagnostics serial console can show the host console
 if a run-command payload fails.
 
+### Step 4b: Userspace VFIO run (no nested VM)
+
+The nested path needs a guest vIOMMU, which Azure does not expose to
+Linux VMs today. The userspace path runs the same driver sources as a
+Linux binary through `vfio-pci` in `noiommu` mode. It validates the
+protocol against real firmware. See `docs/vfio-runner.md` for the gate
+contract and the security note.
+
+Build the runner locally:
+
+```sh
+make vfio-runner
+```
+
+Run it against the live VF (the host needs the Step 3 tooling):
+
+```sh
+AZ_RG=manaval3-rg AZ_HOST_VM=manaval3-host \
+AZ_GW=10.77.1.1 \
+RUNNER_B64_FILE=build/tools/mana-vfio-runner \
+RUNNER_SHA256=<sha256 from make vfio-runner> \
+VFIO_STAGES="probe gdma context packet" \
+scripts/azure_run_vfio.sh
+```
+
+The script arms a detached driver, moves the VF from `mana` to
+`vfio-pci`, runs the gates, restores `mana`, and prints the report.
+Exit 11 from the arm phase means this host placement has no MANA VF.
+Redeploy and retry: `az vm redeploy`, wait, run Step 3 again.
+
 ## Step 5: Tear down
 
 ```sh
