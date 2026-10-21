@@ -150,6 +150,7 @@ echo vfio-pci > "/sys/bus/pci/devices/\$bdf/driver_override"
 echo "\$bdf" > /sys/bus/pci/drivers/vfio-pci/bind || exit 1
 echo "VFIO_BOUND \$(basename "\$(readlink -f "/sys/bus/pci/devices/\$bdf/driver")")"
 
+systemctl reset-failed mana-vfio-watchdog.service 2>/dev/null || true
 systemd-run --unit=mana-vfio-watchdog --on-active=${WATCHDOG_MIN}min \\
 	/bin/sh -c 'pkill -f mana-vfio-runner; echo $bdf > /sys/bus/pci/drivers/vfio-pci/unbind; echo "" > /sys/bus/pci/devices/$bdf/driver_override; echo $bdf > /sys/bus/pci/drivers/mana/bind'
 
@@ -178,6 +179,10 @@ printf '%s\n' "${out:-}" | grep -E "RUNNER_OK|VF_BDF" || true
 echo "== Phase 2: start the detached run (the host network drops; expected) =="
 payload_b="$work/start.sh"
 cat > "$payload_b" <<'BODY_B'
+set -e
+# Failed transient units persist and would block a same-named restart.
+systemctl reset-failed mana-vfio-run.service 2>/dev/null || true
+systemctl reset-failed mana-vfio-watchdog.service 2>/dev/null || true
 rm -f /root/mana-vfio.log
 systemd-run --unit=mana-vfio-run /root/mana-vfio-test.sh
 echo START_ARMED
